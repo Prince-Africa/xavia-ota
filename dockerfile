@@ -1,18 +1,18 @@
 
-FROM node:18.18-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 
 RUN npm run build
 
 
-FROM node:18.18-alpine as runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 

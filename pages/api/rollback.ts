@@ -3,10 +3,16 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 import { StorageFactory } from '../../apiUtils/storage/StorageFactory';
+import { hasAdminSession } from '../../apiUtils/helpers/AdminSession';
 
 export default async function rollbackHandler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  if (!hasAdminSession(req)) {
+    res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
