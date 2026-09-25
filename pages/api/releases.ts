@@ -26,6 +26,7 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
     const releases = records
       .filter((release) => release.status !== 'uploading' && release.status !== 'failed')
       .map((release) => ({
+        id: release.id,
         path: release.path,
         runtimeVersion: release.runtimeVersion,
         timestamp: moment(release.timestamp).utcOffset(60).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
@@ -35,6 +36,7 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
         repositoryUrl: release.repositoryUrl ?? null,
         updateId: release.updateId,
         status: release.status,
+        archiveAvailable: filesByPath.has(release.path),
       }));
 
     res.status(200).json({ releases });

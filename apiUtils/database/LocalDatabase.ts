@@ -90,6 +90,74 @@ export class PostgresDatabase implements DatabaseInterface {
     }
   }
 
+  async rollbackToRelease(
+    id: string,
+    expectedActiveId: string
+  ): Promise<'activated' | 'already_active' | 'same_update_id' | 'active_changed' | 'not_found'> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: runtimeRows } = await client.query(
+        `SELECT runtime_version FROM ${Tables.RELEASES} WHERE id = $1`,
+        [id]
+      );
+      if (!runtimeRows.length) {
+        await client.query('ROLLBACK');
+        return 'not_found';
+      }
+      const runtimeVersion = runtimeRows[0].runtime_version;
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [runtimeVersion]);
+      const { rows: targets } = await client.query(
+        `SELECT id, update_id, status FROM ${Tables.RELEASES}
+         WHERE id = $1 AND runtime_version = $2 FOR UPDATE`,
+        [id, runtimeVersion]
+      );
+      if (
+        !targets.length ||
+        targets[0].status === 'failed' ||
+        targets[0].status === 'uploading' ||
+        !targets[0].update_id
+      ) {
+        await client.query('ROLLBACK');
+        return 'not_found';
+      }
+      const { rows: active } = await client.query(
+        `SELECT id, update_id FROM ${Tables.RELEASES}
+         WHERE runtime_version = $1 AND status = 'active' FOR UPDATE`,
+        [runtimeVersion]
+      );
+      if (active[0]?.id === id) {
+        await client.query('ROLLBACK');
+        return 'already_active';
+      }
+      if (active[0]?.id !== expectedActiveId) {
+        await client.query('ROLLBACK');
+        return 'active_changed';
+      }
+      if (active[0]?.update_id && active[0].update_id === targets[0].update_id) {
+        await client.query('ROLLBACK');
+        return 'same_update_id';
+      }
+      await client.query(
+        `UPDATE ${Tables.RELEASES} SET status = 'inactive'
+         WHERE runtime_version = $1 AND status = 'active'`,
+        [runtimeVersion]
+      );
+      await client.query(
+        `UPDATE ${Tables.RELEASES} SET status = 'active'
+         WHERE id = $1 AND runtime_version = $2`,
+        [id, runtimeVersion]
+      );
+      await client.query('COMMIT');
+      return 'activated';
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async failRelease(id: string): Promise<void> {
     await this.pool.query(
       `UPDATE ${Tables.RELEASES} SET status = 'failed' WHERE id = $1 AND status = 'uploading'`,

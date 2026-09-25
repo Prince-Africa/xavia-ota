@@ -30,6 +30,15 @@ import ProtectedRoute from '../components/ProtectedRoute';
 import { formatFileSize, Release } from '../components/releases';
 import { showToast } from '../components/toast';
 
+interface RollbackPreview {
+  runtimeVersion: string;
+  current: { id: string; commitHash: string; updateId: string; timestamp: string };
+  target: { commitHash: string; updateId: string | null; timestamp: string };
+  estimatedAffectedInstallations: number;
+  archiveAvailable: boolean;
+  blockedReason: string | null;
+}
+
 export default function ReleasesPage() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +46,9 @@ export default function ReleasesPage() {
   const [isOpen, setIsOpen] = useState(false);
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState<Release | null>(null);
+  const [rollbackPreview, setRollbackPreview] = useState<RollbackPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -60,6 +72,7 @@ export default function ReleasesPage() {
   };
 
   const rollBack = async () => {
+    if (!selectedRelease || !rollbackPreview || rollbackPreview.blockedReason) return;
     setIsRollingBack(true);
     try {
       const response = await fetch('/api/rollback', {
@@ -68,24 +81,47 @@ export default function ReleasesPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          path: selectedRelease?.path,
-          runtimeVersion: selectedRelease?.runtimeVersion,
-          commitHash: selectedRelease?.commitHash,
-          commitMessage: selectedRelease?.commitMessage,
+          path: selectedRelease.path,
+          runtimeVersion: selectedRelease.runtimeVersion,
+          expectedActiveReleaseId: rollbackPreview.current.id,
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Rollback failed');
+        const result = await response.json();
+        throw new Error(result.error || 'Rollback failed');
       }
 
       showToast('Rolled back. This release is now live.', 'success');
       fetchReleases();
       setIsOpen(false);
-    } catch {
-      showToast('Roll back failed. The live release is unchanged.', 'error');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Rollback failed', 'error');
+      if (selectedRelease) openRollback(selectedRelease);
     } finally {
       setIsRollingBack(false);
+    }
+  };
+
+  const openRollback = async (release: Release) => {
+    setSelectedRelease(release);
+    setRollbackPreview(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    setIsOpen(true);
+    try {
+      const query = new URLSearchParams({
+        path: release.path,
+        runtimeVersion: release.runtimeVersion,
+      });
+      const response = await fetch(`/api/rollback?${query}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not check rollback');
+      setRollbackPreview(result);
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : 'Could not check rollback');
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -143,7 +179,7 @@ export default function ReleasesPage() {
                 </Tr>
               </Thead>
               <Tbody>
-                {sortedReleases.map((release, index) => (
+                {sortedReleases.map((release) => (
                   <Tr
                     key={release.path}
                     transition="background .15s"
@@ -186,7 +222,7 @@ export default function ReleasesPage() {
                       {formatFileSize(release.size)}
                     </Td>
                     <Td textAlign="right">
-                      {index === 0 ? (
+                      {release.status === 'active' ? (
                         <Flex
                           display="inline-flex"
                           align="center"
@@ -214,10 +250,7 @@ export default function ReleasesPage() {
                           leftIcon={<FiRotateCcw />}
                           _hover={{ bg: 'warning.hover', borderColor: 'warning.border' }}
                           _active={{ bg: 'warning.hover' }}
-                          onClick={() => {
-                            setSelectedRelease(release);
-                            setIsOpen(true);
-                          }}>
+                          onClick={() => openRollback(release)}>
                           Roll back
                         </Button>
                       )}
@@ -241,41 +274,79 @@ export default function ReleasesPage() {
               </AlertDialogHeader>
 
               <AlertDialogBody>
-                <Box
-                  bg="field"
-                  border="1px solid"
-                  borderColor="line"
-                  borderRadius="10px"
-                  px={4}
-                  py={3}
-                  fontFamily="mono"
-                  fontSize="xs">
-                  <Text color="muted">
-                    runtime{' '}
-                    <Text as="span" color="white">
-                      {selectedRelease?.runtimeVersion}
+                {previewLoading && <LoadingSpinner py={8} />}
+                {previewError && <Text color="warning.text">{previewError}</Text>}
+                {rollbackPreview && (
+                  <Box>
+                    <Text fontSize="sm" color="muted" mb={3}>
+                      Runtime{' '}
+                      <Text as="span" fontFamily="mono" color="white">
+                        {rollbackPreview.runtimeVersion}
+                      </Text>
                     </Text>
-                  </Text>
-                  <Text color="muted" mt={1} wordBreak="break-all">
-                    commit{' '}
-                    <Text as="span" color="white">
-                      {selectedRelease?.commitHash ?? 'unknown'}
+                    {(
+                      [
+                        ['Current active', rollbackPreview.current],
+                        ['Rollback target', rollbackPreview.target],
+                      ] as const
+                    ).map(([label, release]) => (
+                      <Box
+                        key={label}
+                        bg="field"
+                        border="1px solid"
+                        borderColor="line"
+                        borderRadius="10px"
+                        px={4}
+                        py={3}
+                        mb={3}>
+                        <Text fontSize="xs" color="muted" mb={2}>
+                          {label}
+                        </Text>
+                        <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
+                          Commit: {release.commitHash || 'unknown'}
+                        </Text>
+                        <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
+                          Update ID: {release.updateId || 'unavailable'}
+                        </Text>
+                        <Text fontSize="xs" color="muted" mt={1}>
+                          Published:{' '}
+                          {moment(release.timestamp)
+                            .utcOffset(60)
+                            .format('MMM D, YYYY HH:mm [UTC+1]')}
+                        </Text>
+                      </Box>
+                    ))}
+                    <Text fontSize="sm">
+                      Estimated affected installations:{' '}
+                      <Text as="span" fontFamily="mono">
+                        {rollbackPreview.estimatedAffectedInstallations}
+                      </Text>
                     </Text>
-                  </Text>
-                </Box>
-                <Box
-                  mt={3}
-                  bg="warning.bg"
-                  border="1px solid"
-                  borderColor="rgba(224,180,0,.35)"
-                  borderRadius="10px"
-                  px={4}
-                  py={3}
-                  color="warning.text"
-                  fontSize="sm">
-                  This build becomes the live release with a new timestamp. Devices pick it up on
-                  their next update check.
-                </Box>
+                    <Text fontSize="xs" color="muted">
+                      Based on tracked installations of the current release.
+                    </Text>
+                    <Text
+                      fontSize="sm"
+                      mt={2}
+                      color={rollbackPreview.archiveAvailable ? 'verified.text' : 'warning.text'}>
+                      Archive: {rollbackPreview.archiveAvailable ? 'Available' : 'Unavailable'}
+                    </Text>
+                    {rollbackPreview.blockedReason && (
+                      <Box
+                        mt={3}
+                        bg="warning.bg"
+                        border="1px solid"
+                        borderColor="warning.border"
+                        borderRadius="10px"
+                        px={4}
+                        py={3}
+                        color="warning.text"
+                        fontSize="sm">
+                        {rollbackPreview.blockedReason}
+                      </Box>
+                    )}
+                  </Box>
+                )}
               </AlertDialogBody>
 
               <AlertDialogFooter gap={3}>
@@ -286,7 +357,13 @@ export default function ReleasesPage() {
                   onClick={() => setIsOpen(false)}>
                   Cancel
                 </Button>
-                <Button colorScheme="primary" isLoading={isRollingBack} onClick={rollBack}>
+                <Button
+                  colorScheme="primary"
+                  isLoading={isRollingBack}
+                  isDisabled={
+                    previewLoading || !rollbackPreview || Boolean(rollbackPreview.blockedReason)
+                  }
+                  onClick={rollBack}>
                   Roll back
                 </Button>
               </AlertDialogFooter>

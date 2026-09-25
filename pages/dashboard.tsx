@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [androidDownloads, setAndroidDownloads] = useState(0);
   const [totalReleases, setTotalReleases] = useState(0);
   const [monthlyInstallations, setMonthlyInstallations] = useState(0);
-  const [latestRelease, setLatestRelease] = useState<Release | null>(null);
+  const [activeReleases, setActiveReleases] = useState<Release[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const fetchData = async () => {
     try {
@@ -46,13 +46,7 @@ export default function Dashboard() {
       );
 
       const releases: Release[] = releasesData.releases ?? [];
-      setLatestRelease(
-        releases.reduce<Release | null>(
-          (latest, release) =>
-            !latest || new Date(release.timestamp) > new Date(latest.timestamp) ? release : latest,
-          null
-        )
-      );
+      setActiveReleases(releases.filter((release) => release.status === 'active'));
 
       setTotalDownloaded(data.trackings.reduce((acc, curr) => acc + curr.count, 0));
 
@@ -82,6 +76,11 @@ export default function Dashboard() {
     { label: 'Android installs', value: androidDownloads },
     { label: 'Unique installs this month', value: monthlyInstallations },
   ];
+  const latestRelease = activeReleases.reduce<Release | null>(
+    (latest, release) =>
+      !latest || new Date(release.timestamp) > new Date(latest.timestamp) ? release : latest,
+    null
+  );
 
   return (
     <ProtectedRoute>
@@ -120,7 +119,7 @@ export default function Dashboard() {
                         animation={`${pulse} 2.4s ease-out infinite`}
                       />
                       <Text fontSize="sm" fontWeight={500} color="verified.text">
-                        Latest release
+                        Most recently published active release
                       </Text>
                     </Flex>
                     <Text fontSize="sm" color="muted">
@@ -157,7 +156,7 @@ export default function Dashboard() {
                       />
                       <Text>{formatFileSize(latestRelease.size)}</Text>
                       <Text>
-                        {moment(latestRelease.timestamp).utcOffset(60).format('MMM D, HH:mm')} UTC+1
+                        {moment(latestRelease.timestamp).utcOffset(60).format('MMM D, HH:mm')}
                       </Text>
                     </Flex>
                     <Button
@@ -174,10 +173,44 @@ export default function Dashboard() {
                 </>
               ) : (
                 <Heading as="p" fontSize="xl">
-                  No releases yet
+                  No active releases
                 </Heading>
               )}
             </Box>
+
+            {activeReleases.length > 0 && (
+              <Box
+                mt={4}
+                bg="panel"
+                border="1px solid"
+                borderColor="line"
+                borderRadius="14px"
+                p={{ base: 5, md: 6 }}>
+                <Heading as="h2" fontSize="md" mb={4}>
+                  Active by runtime
+                </Heading>
+                {activeReleases.map((release) => (
+                  <Flex
+                    key={release.id}
+                    justify="space-between"
+                    gap={4}
+                    wrap="wrap"
+                    py={3}
+                    borderTop="1px solid"
+                    borderColor="line">
+                    <Text fontFamily="mono" fontSize="sm">
+                      {release.runtimeVersion}
+                    </Text>
+                    <Text fontFamily="mono" fontSize="xs" color="muted">
+                      {release.commitHash || 'Unknown commit'}
+                    </Text>
+                    <Text fontFamily="mono" fontSize="xs" color="muted">
+                      {release.updateId || 'Update ID pending'}
+                    </Text>
+                  </Flex>
+                ))}
+              </Box>
+            )}
 
             <Grid
               mt={4}

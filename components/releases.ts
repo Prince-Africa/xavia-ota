@@ -1,4 +1,5 @@
 export interface Release {
+  id: string;
   path: string;
   runtimeVersion: string;
   timestamp: string;
@@ -6,6 +7,9 @@ export interface Release {
   commitHash: string | null;
   commitMessage: string | null;
   repositoryUrl: string | null;
+  updateId: string | null;
+  status: 'active' | 'inactive';
+  archiveAvailable: boolean;
 }
 
 export function formatFileSize(bytes: number): string {
