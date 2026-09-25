@@ -1,4 +1,5 @@
 import FormData from 'form-data';
+import { randomUUID } from 'crypto';
 
 import { NextApiRequest, NextApiResponse } from 'next';
 import { serializeDictionary } from 'structured-headers';
@@ -10,9 +11,31 @@ import { UpdateHelper, NoUpdateAvailableError } from '../../apiUtils/helpers/Upd
 import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 import { getLogger } from '../../apiUtils/logger';
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
-import moment from 'moment';
 
 const logger = getLogger('manifest');
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getInstallationId(
+  req: NextApiRequest,
+  res: NextApiResponse
+): { id: string; confirmed: boolean } {
+  const header = req.headers['x-installation-id'];
+  const confirmed = typeof header === 'string' && UUID_PATTERN.test(header);
+  const id = confirmed ? header.toLowerCase() : randomUUID();
+  res.setHeader(
+    'expo-server-defined-headers',
+    serializeDictionary(new Map([['x-installation-id', [id, new Map()]]]))
+  );
+  return { id, confirmed };
+}
+
+async function trackInstallation(releaseId: string, platform: string, installationId: string) {
+  try {
+    await DatabaseFactory.getDatabase().createTracking({ releaseId, platform, installationId });
+  } catch (error) {
+    logger.error('Failed to track installation', { releaseId, error });
+  }
+}
 
 export default async function manifestEndpoint(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -58,6 +81,8 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
     return;
   }
 
+  const installation = getInstallationId(req, res);
+
   const database = DatabaseFactory.getDatabase();
   const releaseRecord = await database.getLatestReleaseRecordForRuntimeVersion(runtimeVersion);
 
@@ -70,6 +95,9 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
         runtimeVersion,
       });
       await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
+      if (installation.confirmed && res.statusCode === 200) {
+        await trackInstallation(releaseRecord.id, platform, installation.id);
+      }
       return;
     }
   }
@@ -105,7 +133,8 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
           updateBundlePath,
           runtimeVersion,
           platform,
-          protocolVersion
+          protocolVersion,
+          installation
         );
       } else if (updateType === UpdateType.ROLLBACK) {
         logger.info('Rollback is available.');
@@ -143,7 +172,8 @@ async function putUpdateInResponseAsync(
   updateBundlePath: string,
   runtimeVersion: string,
   platform: string,
-  protocolVersion: number
+  protocolVersion: number,
+  installation: { id: string; confirmed: boolean }
 ): Promise<void> {
   const currentUpdateId = req.headers['expo-current-update-id'];
   const { metadataJson, createdAt, id } = await UpdateHelper.getMetadataAsync({
@@ -240,16 +270,17 @@ async function putUpdateInResponseAsync(
   res.write(form.getBuffer());
   res.end();
 
-  const database = DatabaseFactory.getDatabase();
-  const release = await database.getReleaseByPath(updateBundlePath + '.zip');
-
-  if (release) {
-    logger.info(`Tracking download for release.`, { releaseId: release.id });
-    await database.createTracking({
-      platform,
-      releaseId: release.id,
-      downloadTimestamp: moment().utc().toISOString(),
-    });
+  if (installation.confirmed) {
+    try {
+      const release = await DatabaseFactory.getDatabase().getReleaseByPath(
+        updateBundlePath + '.zip'
+      );
+      if (release) {
+        await trackInstallation(release.id, platform, installation.id);
+      }
+    } catch (error) {
+      logger.error('Failed to look up release for installation tracking', { error });
+    }
   }
 }
 

@@ -1,6 +1,12 @@
 import { Pool } from 'pg';
 
-import { DatabaseInterface, Release, Tracking, TrackingMetrics } from './DatabaseInterface';
+import {
+  DatabaseInterface,
+  MonthlyInstallationMetrics,
+  Release,
+  Tracking,
+  TrackingMetrics,
+} from './DatabaseInterface';
 import { Tables } from './DatabaseFactory';
 
 export class PostgresDatabase implements DatabaseInterface {
@@ -37,22 +43,22 @@ export class PostgresDatabase implements DatabaseInterface {
     return rows[0] || null;
   }
 
-  async createTracking(tracking: Omit<Tracking, 'id'>): Promise<Tracking> {
+  async createTracking(
+    tracking: Pick<Tracking, 'releaseId' | 'platform' | 'installationId'>
+  ): Promise<void> {
     const query = `
-      INSERT INTO ${Tables.RELEASES_TRACKING} (release_id, platform)
-      VALUES ($1, $2)
-      RETURNING id, release_id as "releaseId", download_timestamp as "downloadTimestamp", platform
+      INSERT INTO ${Tables.RELEASES_TRACKING} (release_id, platform, installation_id)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (release_id, installation_id) DO NOTHING
     `;
-    const values = [tracking.releaseId, tracking.platform];
-    const { rows } = await this.pool.query(query, values);
-    return rows[0];
+    await this.pool.query(query, [tracking.releaseId, tracking.platform, tracking.installationId]);
   }
 
   async getReleaseTrackingMetrics(releaseId: string): Promise<TrackingMetrics[]> {
     const query = `
       SELECT platform, COUNT(*) as count
       FROM ${Tables.RELEASES_TRACKING}
-      WHERE release_id = $1
+      WHERE release_id = $1 AND installation_id IS NOT NULL
       GROUP BY platform
     `;
     const { rows } = await this.pool.query(query, [releaseId]);
@@ -66,6 +72,7 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       SELECT platform, COUNT(*) as count
       FROM ${Tables.RELEASES_TRACKING}
+      WHERE installation_id IS NOT NULL
       GROUP BY platform
     `;
     const { rows } = await this.pool.query(query);
@@ -73,6 +80,13 @@ export class PostgresDatabase implements DatabaseInterface {
       platform: row.platform,
       count: Number(row.count),
     }));
+  }
+
+  async getMonthlyInstallationMetrics(): Promise<MonthlyInstallationMetrics[]> {
+    const { rows } = await this.pool.query(`
+      SELECT month, count FROM monthly_installations ORDER BY month DESC
+    `);
+    return rows.map((row) => ({ month: row.month, count: Number(row.count) }));
   }
 
   async createRelease(release: Omit<Release, 'id'>): Promise<Release> {

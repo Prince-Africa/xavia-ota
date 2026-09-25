@@ -1,18 +1,26 @@
-.PHONY: dev db check-db
+.PHONY: dev db check-db migrate db-stop
+
+COMPOSE = docker compose -f ./containers/database/docker-compose.yml
 
 # Start both database and Next.js development server
-dev: db check-db
-	next dev -p 3001
+dev: db check-db migrate
+	./node_modules/.bin/next dev -p 3001
 
 # Start Docker Compose in detached mode
 db:
-	cd ./containers/database && docker-compose up -d
+	$(COMPOSE) up -d
 
 # Check if database container is healthy
 check-db:
 	@echo "Waiting for database to be ready..."
-	@until docker-compose -f ./containers/database/docker-compose.yml ps | grep "healthy"; do \
+	@until $(COMPOSE) ps --status running | grep "healthy"; do \
 		echo "Waiting for database..."; \
 		sleep 1; \
 	done
-	@echo "Database is ready!" 
+	@echo "Database is ready!"
+
+migrate:
+	$(COMPOSE) exec -T xavia-postgres psql -U postgres -d releases_db -v ON_ERROR_STOP=1 < ./containers/database/migrations/20260925_installation_tracking.sql
+
+db-stop:
+	$(COMPOSE) stop

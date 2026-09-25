@@ -68,6 +68,7 @@ describe('Manifest API', () => {
 
     const mockDatabase = {
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(mockRelease),
+      createTracking: jest.fn(),
     } as unknown as DatabaseInterface;
 
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
@@ -105,6 +106,31 @@ describe('Manifest API', () => {
       JSON.stringify(mockNoUpdateDirective),
       expect.any(Object)
     );
+    expect(res.getHeader('expo-server-defined-headers')).toMatch(/x-installation-id="[0-9a-f-]+"/);
+    expect(mockDatabase.createTracking).not.toHaveBeenCalled();
+
+    const installationId = String(res.getHeader('expo-server-defined-headers')).match(
+      /"([0-9a-f-]+)"/
+    )![1];
+    const second = createMocks({
+      method: 'GET',
+      headers: {
+        'expo-platform': 'ios',
+        'expo-runtime-version': '1.0.0',
+        'expo-protocol-version': '1',
+        'expo-current-update-id': 'test-update-id',
+        'x-installation-id': installationId,
+      },
+    });
+    await manifestEndpoint(second.req, second.res);
+    expect(second.res.getHeader('expo-server-defined-headers')).toBe(
+      `x-installation-id="${installationId}"`
+    );
+    expect(mockDatabase.createTracking).toHaveBeenCalledWith({
+      releaseId: mockRelease.id,
+      platform: 'ios',
+      installationId,
+    });
   });
 
   it('should look for an update when the request and release have no update ID', async () => {
@@ -217,13 +243,18 @@ describe('Manifest API', () => {
         'expo-runtime-version': '1.0.0',
         'expo-protocol-version': '1',
         'expo-current-update-id': 'current-update-id', // Different from the release updateId
+        'x-installation-id': '576634c0-6482-4c50-8c60-169f7ac9b7b8',
       },
     });
 
     await manifestEndpoint(req, res);
 
     expect(res._getStatusCode()).toBe(200);
-    expect(mockDatabase.createTracking).toHaveBeenCalled();
+    expect(mockDatabase.createTracking).toHaveBeenCalledWith({
+      platform: 'ios',
+      releaseId: 'release-id',
+      installationId: '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+    });
     expect(mockFormData.append).toHaveBeenCalledWith(
       'manifest',
       expect.any(String),

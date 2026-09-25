@@ -11,11 +11,22 @@ export default function Dashboard() {
   const [iosDownloads, setIosDownloads] = useState(0);
   const [androidDownloads, setAndroidDownloads] = useState(0);
   const [totalReleases, setTotalReleases] = useState(0);
+  const [monthlyInstallations, setMonthlyInstallations] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const fetchData = async () => {
     try {
-      const response = await fetch('/api/tracking/all');
+      const [response, monthlyResponse] = await Promise.all([
+        fetch('/api/tracking/all'),
+        fetch('/api/tracking/monthly'),
+      ]);
       const data = (await response.json()) as AllTrackingResponse;
+      const monthlyData = await monthlyResponse.json();
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      setMonthlyInstallations(
+        monthlyData.installations?.find(
+          (item: { month: string; count: number }) => item.month === currentMonth
+        )?.count ?? 0
+      );
 
       setTotalDownloaded(data.trackings.reduce((acc, curr) => acc + curr.count, 0));
 
@@ -57,7 +68,7 @@ export default function Dashboard() {
 
           <Card bg="primary.500" textColor="white" variant="outline">
             <CardHeader textAlign="center">
-              <Heading size="md">Total Downloads</Heading>
+              <Heading size="md">Installations Across Releases</Heading>
             </CardHeader>
             <CardBody textAlign="center">
               <Heading size="lg">{totalDownloaded}</Heading>
@@ -66,7 +77,7 @@ export default function Dashboard() {
 
           <Card bg="primary.500" textColor="white" variant="outline">
             <CardHeader textAlign="center">
-              <Heading size="md">IOS Downloads</Heading>
+              <Heading size="md">iOS Installations Across Releases</Heading>
             </CardHeader>
             <CardBody textAlign="center">
               <Heading size="lg">{iosDownloads}</Heading>
@@ -75,10 +86,19 @@ export default function Dashboard() {
 
           <Card bg="primary.500" textColor="white" variant="outline">
             <CardHeader textAlign="center">
-              <Heading size="md">Android Downloads</Heading>
+              <Heading size="md">Android Installations Across Releases</Heading>
             </CardHeader>
             <CardBody textAlign="center">
               <Heading size="lg">{androidDownloads}</Heading>
+            </CardBody>
+          </Card>
+
+          <Card bg="primary.500" textColor="white" variant="outline">
+            <CardHeader textAlign="center">
+              <Heading size="md">Unique Installations This Month</Heading>
+            </CardHeader>
+            <CardBody textAlign="center">
+              <Heading size="lg">{monthlyInstallations}</Heading>
             </CardBody>
           </Card>
         </SimpleGrid>
