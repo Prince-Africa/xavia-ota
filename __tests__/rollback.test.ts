@@ -2,14 +2,17 @@ import { createMocks } from 'node-mocks-http';
 
 import { DatabaseFactory } from '../apiUtils/database/DatabaseFactory';
 import { StorageFactory } from '../apiUtils/storage/StorageFactory';
+import { hasAdminSession } from '../apiUtils/helpers/AdminSession';
 import rollbackHandler from '../pages/api/rollback';
 
 jest.mock('../apiUtils/database/DatabaseFactory');
 jest.mock('../apiUtils/storage/StorageFactory');
+jest.mock('../apiUtils/helpers/AdminSession');
 
 describe('Rollback API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (hasAdminSession as jest.Mock).mockReturnValue(true);
   });
 
   it('should return 405 for non-POST requests', async () => {
@@ -27,6 +30,20 @@ describe('Rollback API', () => {
     await rollbackHandler(req, res);
     expect(res._getStatusCode()).toBe(400);
     expect(JSON.parse(res._getData())).toMatchSnapshot();
+  });
+
+  it('should reject rollback without an admin session', async () => {
+    (hasAdminSession as jest.Mock).mockReturnValue(false);
+    const { req, res } = createMocks({
+      method: 'POST',
+      body: { path: 'updates/1.0.0/old.zip', runtimeVersion: '1.0.0', commitHash: 'abc123' },
+    });
+
+    await rollbackHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(401);
+    expect(StorageFactory.getStorage).not.toHaveBeenCalled();
+    expect(DatabaseFactory.getDatabase).not.toHaveBeenCalled();
   });
 
   it('should handle rollback successfully', async () => {
