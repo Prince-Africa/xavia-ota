@@ -65,7 +65,7 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
     const updateId = releaseRecord.updateId;
 
     const currentUpdateId = req.headers['expo-current-update-id'];
-    if (currentUpdateId === updateId) {
+    if (currentUpdateId && updateId && currentUpdateId === updateId) {
       logger.info('User is already running the latest release. Returning NoUpdateAvailable.', {
         runtimeVersion,
       });

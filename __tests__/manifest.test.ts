@@ -107,6 +107,42 @@ describe('Manifest API', () => {
     );
   });
 
+  it('should look for an update when the request and release have no update ID', async () => {
+    const mockDatabase = {
+      getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue({
+        id: 'release-id',
+        runtimeVersion: '1.2.0',
+        path: 'updates/1.2.0/update.zip',
+        timestamp: '2026-09-24T18:06:32Z',
+        commitHash: 'abc123',
+      }),
+    } as unknown as DatabaseInterface;
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
+    (UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync as jest.Mock).mockResolvedValue(
+      'updates/1.2.0/update'
+    );
+    (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({
+      getEntry: jest.fn().mockReturnValue(null),
+    });
+    (UpdateHelper.getMetadataAsync as jest.Mock).mockRejectedValue(new Error('stop after lookup'));
+
+    const { req, res } = createMocks({
+      method: 'GET',
+      headers: {
+        'expo-platform': 'android',
+        'expo-runtime-version': '1.2.0',
+        'expo-protocol-version': '1',
+      },
+    });
+
+    await manifestEndpoint(req, res);
+
+    expect(UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync).toHaveBeenCalledWith(
+      '1.2.0'
+    );
+    expect(UpdateHelper.createNoUpdateAvailableDirectiveAsync).not.toHaveBeenCalled();
+  });
+
   it('should handle normal update successfully', async () => {
     // Mock database to return a release with different updateId
     const mockRelease: Release = {
