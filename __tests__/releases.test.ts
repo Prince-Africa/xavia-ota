@@ -54,6 +54,7 @@ describe('Releases API', () => {
       expect.objectContaining({
         path: 'updates/1.0.0/update.zip',
         runtimeVersion: '1.0.0',
+        timestamp: '2024-03-20T01:00:00.000+01:00',
         size: 1000,
         status: 'active',
       }),

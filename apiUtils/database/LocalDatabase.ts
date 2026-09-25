@@ -23,7 +23,7 @@ export class PostgresDatabase implements DatabaseInterface {
   }
   async getLatestReleaseRecordForRuntimeVersion(runtimeVersion: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND status = 'active'
@@ -35,7 +35,7 @@ export class PostgresDatabase implements DatabaseInterface {
   }
   async getReleaseByPath(path: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE path = $1
@@ -47,7 +47,7 @@ export class PostgresDatabase implements DatabaseInterface {
   async getReleaseByUpdateId(runtimeVersion: string, updateId: string): Promise<Release | null> {
     const { rows } = await this.pool.query(
       `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND update_id = $2
@@ -230,7 +230,12 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getMonthlyInstallationMetrics(): Promise<MonthlyInstallationMetrics[]> {
     const { rows } = await this.pool.query(`
-      SELECT month, count FROM monthly_installations ORDER BY month DESC
+      SELECT to_char(date_trunc('month', download_timestamp + interval '1 hour'), 'YYYY-MM') AS month,
+             COUNT(DISTINCT installation_id) AS count
+      FROM ${Tables.RELEASES_TRACKING}
+      WHERE installation_id IS NOT NULL
+      GROUP BY date_trunc('month', download_timestamp + interval '1 hour')
+      ORDER BY month DESC
     `);
     return rows.map((row) => ({ month: row.month, count: Number(row.count) }));
   }
@@ -239,7 +244,7 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, runtime_version as "runtimeVersion", path, timestamp, commit_hash as "commitHash", update_id as "updateId",
+      RETURNING id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp, commit_hash as "commitHash", update_id as "updateId",
                 commit_message as "commitMessage", repository_url as "repositoryUrl", status
     `;
 
@@ -259,7 +264,7 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getRelease(id: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE id = $1
@@ -271,7 +276,7 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async listReleases(): Promise<Release[]> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES}

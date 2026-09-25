@@ -173,7 +173,7 @@ export default function ReleasesPage() {
                   <Th>Runtime</Th>
                   <Th>Commit</Th>
                   <Th>Message</Th>
-                  <Th>Published (UTC+1)</Th>
+                  <Th>Published</Th>
                   <Th isNumeric>Size</Th>
                   <Th />
                 </Tr>
@@ -310,9 +310,7 @@ export default function ReleasesPage() {
                         </Text>
                         <Text fontSize="xs" color="muted" mt={1}>
                           Published:{' '}
-                          {moment(release.timestamp)
-                            .utcOffset(60)
-                            .format('MMM D, YYYY HH:mm [UTC+1]')}
+                          {moment(release.timestamp).utcOffset(60).format('MMM D, YYYY HH:mm')}
                         </Text>
                       </Box>
                     ))}

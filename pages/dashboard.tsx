@@ -38,7 +38,7 @@ export default function Dashboard() {
       const data = (await response.json()) as AllTrackingResponse;
       const monthlyData = await monthlyResponse.json();
       const releasesData = await releasesResponse.json();
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonth = moment().utcOffset(60).format('YYYY-MM');
       setMonthlyInstallations(
         monthlyData.installations?.find(
           (item: { month: string; count: number }) => item.month === currentMonth
