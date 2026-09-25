@@ -2,7 +2,16 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { Box, Button, FormControl, FormErrorMessage, Input } from '@chakra-ui/react';
+import {
+  Box,
+  Button,
+  FormControl,
+  FormErrorMessage,
+  FormLabel,
+  Heading,
+  Input,
+} from '@chakra-ui/react';
+import Image from 'next/image';
 
 export default function Home() {
   const [password, setPassword] = useState('');
@@ -32,22 +41,29 @@ export default function Home() {
   };
 
   return (
-    <Box display="flex" minHeight="100vh" alignItems="center" justifyContent="center">
-      <form onSubmit={handleLogin}>
+    <Box display="flex" minHeight="100vh" alignItems="center" justifyContent="center" px={5}>
+      <Box as="form" onSubmit={handleLogin} w="full" maxW="360px">
+        <Image src="/go_logo.svg" width={62} height={40} alt="GO" priority />
+        <Heading as="h1" fontSize="2xl" mt={8} mb={8}>
+          OTA updates
+        </Heading>
         <FormControl isInvalid={!!error} mb={4}>
+          <FormLabel fontSize="sm" color="muted" fontWeight={500}>
+            Admin password
+          </FormLabel>
           <Input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter admin password"
+            autoFocus
             size="md"
           />
           {error && <FormErrorMessage>{error}</FormErrorMessage>}
         </FormControl>
-        <Button type="submit" colorScheme="blue" width="full">
-          Login
+        <Button type="submit" colorScheme="primary" width="full">
+          Sign in
         </Button>
-      </form>
+      </Box>
     </Box>
   );
 }
