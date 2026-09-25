@@ -63,7 +63,7 @@ export default function Dashboard() {
 
       setIosDownloads(iosData.reduce((acc, curr) => acc + curr.count, 0));
       setAndroidDownloads(androidData.reduce((acc, curr) => acc + curr.count, 0));
-      setTotalReleases(data.totalReleases);
+      setTotalReleases(releases.length);
     } catch (error) {
       console.error('Failed to fetch tracking data:', error);
     } finally {

@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
+import { UpdateHelper } from '../../apiUtils/helpers/UpdateHelper';
 import { StorageFactory } from '../../apiUtils/storage/StorageFactory';
 
 export default async function releasesHandler(req: NextApiRequest, res: NextApiResponse) {
@@ -27,7 +28,10 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
         releases.push({
           path: release?.path || `${folderPath}/${file.name}`,
           runtimeVersion,
-          timestamp: file.created_at,
+          timestamp:
+            UpdateHelper.getPublishedAtFromFileName(file.name) ??
+            release?.timestamp ??
+            file.created_at,
           size: file.metadata.size,
           commitHash,
           commitMessage: release?.commitMessage,

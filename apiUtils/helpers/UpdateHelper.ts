@@ -1,4 +1,5 @@
 import mime from 'mime';
+import moment from 'moment';
 
 import { HashHelper } from './HashHelper';
 import { ZipHelper } from './ZipHelper';
@@ -24,6 +25,14 @@ export type GetAssetMetadataArg =
     };
 
 export class UpdateHelper {
+  // Bundles are named by their UTC publish time (YYYYMMDDHHmmss.zip), and that name is what
+  // decides which update devices receive. File creation times are unreliable (Linux volumes
+  // often report 1970), so prefer this.
+  static getPublishedAtFromFileName(fileName: string): string | null {
+    const parsed = moment.utc(fileName.replace(/\.zip$/, ''), 'YYYYMMDDHHmmss', true);
+    return parsed.isValid() ? parsed.toISOString() : null;
+  }
+
   static async getLatestUpdateBundlePathForRuntimeVersionAsync(
     runtimeVersion: string
   ): Promise<string> {
