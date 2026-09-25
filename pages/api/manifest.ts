@@ -85,39 +85,27 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
 
   const database = DatabaseFactory.getDatabase();
   const releaseRecord = await database.getLatestReleaseRecordForRuntimeVersion(runtimeVersion);
-
-  if (releaseRecord) {
-    const updateId = releaseRecord.updateId;
-
-    const currentUpdateId = req.headers['expo-current-update-id'];
-    if (currentUpdateId && updateId && currentUpdateId === updateId) {
-      logger.info('User is already running the latest release. Returning NoUpdateAvailable.', {
-        runtimeVersion,
-      });
-      await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
-      if (installation.confirmed && res.statusCode === 200) {
-        await trackInstallation(releaseRecord.id, platform, installation.id);
-      }
-      return;
-    }
+  if (!releaseRecord) {
+    await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
+    return;
+  }
+  const updateBundlePath = releaseRecord.path.replace(/\.zip$/, '');
+  let updateId = releaseRecord.updateId;
+  if (!updateId) {
+    const metadata = await UpdateHelper.getMetadataAsync({ updateBundlePath, runtimeVersion });
+    updateId = HashHelper.convertSHA256HashToUUID(metadata.id);
+    await database.setReleaseUpdateId(releaseRecord.id, updateId);
   }
 
-  let updateBundlePath: string;
-  try {
-    updateBundlePath = await UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync(
-      runtimeVersion
-    );
-  } catch (error: any) {
-    if (error instanceof NoUpdateAvailableError) {
-      logger.info('No update available for runtime version', { runtimeVersion });
-      await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
-      return;
-    }
-
-    res.statusCode = 404;
-    res.json({
-      error: error.message,
+  const currentUpdateId = req.headers['expo-current-update-id'];
+  if (currentUpdateId && updateId && currentUpdateId === updateId) {
+    logger.info('User is already running the latest release. Returning NoUpdateAvailable.', {
+      runtimeVersion,
     });
+    await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
+    if (installation.confirmed && res.statusCode === 200) {
+      await trackInstallation(releaseRecord.id, platform, installation.id);
+    }
     return;
   }
 
@@ -134,7 +122,9 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
           runtimeVersion,
           platform,
           protocolVersion,
-          installation
+          installation,
+          releaseRecord.id,
+          updateId
         );
       } else if (updateType === UpdateType.ROLLBACK) {
         logger.info('Rollback is available.');
@@ -173,17 +163,19 @@ async function putUpdateInResponseAsync(
   runtimeVersion: string,
   platform: string,
   protocolVersion: number,
-  installation: { id: string; confirmed: boolean }
+  installation: { id: string; confirmed: boolean },
+  releaseId: string,
+  updateId: string
 ): Promise<void> {
   const currentUpdateId = req.headers['expo-current-update-id'];
-  const { metadataJson, createdAt, id } = await UpdateHelper.getMetadataAsync({
+  const { metadataJson, createdAt } = await UpdateHelper.getMetadataAsync({
     updateBundlePath,
     runtimeVersion,
   });
 
   // NoUpdateAvailable directive only supported on protocol version 1
   // for protocol version 0, serve most recent update as normal
-  if (currentUpdateId === HashHelper.convertSHA256HashToUUID(id) && protocolVersion === 1) {
+  if (currentUpdateId === updateId && protocolVersion === 1) {
     logger.info('returning NoUpdateAvailable to client');
     throw new NoUpdateAvailableError();
   }
@@ -194,7 +186,7 @@ async function putUpdateInResponseAsync(
   });
   const platformSpecificMetadata = metadataJson.fileMetadata[platform];
   const manifest = {
-    id: HashHelper.convertSHA256HashToUUID(id),
+    id: updateId,
     createdAt,
     runtimeVersion,
     assets: await Promise.all(
@@ -204,6 +196,7 @@ async function putUpdateInResponseAsync(
           filePath: asset.path,
           ext: asset.ext,
           runtimeVersion,
+          updateId,
           platform,
           isLaunchAsset: false,
         })
@@ -214,6 +207,7 @@ async function putUpdateInResponseAsync(
       filePath: platformSpecificMetadata.bundle,
       isLaunchAsset: true,
       runtimeVersion,
+      updateId,
       platform,
       ext: null,
     }),
@@ -272,12 +266,7 @@ async function putUpdateInResponseAsync(
 
   if (installation.confirmed) {
     try {
-      const release = await DatabaseFactory.getDatabase().getReleaseByPath(
-        updateBundlePath + '.zip'
-      );
-      if (release) {
-        await trackInstallation(release.id, platform, installation.id);
-      }
+      await trackInstallation(releaseId, platform, installation.id);
     } catch (error) {
       logger.error('Failed to look up release for installation tracking', { error });
     }

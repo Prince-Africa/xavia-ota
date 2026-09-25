@@ -6,6 +6,7 @@ export interface Release {
   commitHash: string;
   commitMessage: string;
   updateId?: string;
+  status?: 'uploading' | 'active' | 'inactive' | 'failed';
   repositoryUrl?: string | null;
 }
 

@@ -20,8 +20,8 @@ check-db:
 	@echo "Database is ready!"
 
 migrate:
-	$(COMPOSE) exec -T xavia-postgres psql -U postgres -d releases_db -v ON_ERROR_STOP=1 < ./containers/database/migrations/20260925_installation_tracking.sql
-	$(COMPOSE) exec -T xavia-postgres psql -U postgres -d releases_db -v ON_ERROR_STOP=1 < ./containers/database/migrations/20260925_release_repository_url.sql
+	# Runs all versioned migrations, including 20260926_release_lifecycle.sql.
+	POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=releases_db POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres node ./scripts/migrate-postgres.js
 
 db-stop:
 	$(COMPOSE) stop

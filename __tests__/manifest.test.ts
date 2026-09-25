@@ -142,7 +142,8 @@ describe('Manifest API', () => {
         timestamp: '2026-09-24T18:06:32Z',
         commitHash: 'abc123',
       }),
-    } as unknown as DatabaseInterface;
+      setReleaseUpdateId: jest.fn(),
+    };
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
     (UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync as jest.Mock).mockResolvedValue(
       'updates/1.2.0/update'
@@ -150,7 +151,16 @@ describe('Manifest API', () => {
     (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({
       getEntry: jest.fn().mockReturnValue(null),
     });
-    (UpdateHelper.getMetadataAsync as jest.Mock).mockRejectedValue(new Error('stop after lookup'));
+    (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue({ id: 'metadata-hash' });
+    (HashHelper.convertSHA256HashToUUID as jest.Mock).mockReturnValue('backfilled-id');
+    (UpdateHelper.createNoUpdateAvailableDirectiveAsync as jest.Mock).mockResolvedValue({
+      type: 'noUpdateAvailable',
+    });
+    (FormData as unknown as jest.Mock).mockImplementation(() => ({
+      append: jest.fn(),
+      getBoundary: () => 'boundary',
+      getBuffer: () => Buffer.from('data'),
+    }));
 
     const { req, res } = createMocks({
       method: 'GET',
@@ -158,15 +168,14 @@ describe('Manifest API', () => {
         'expo-platform': 'android',
         'expo-runtime-version': '1.2.0',
         'expo-protocol-version': '1',
+        'expo-current-update-id': 'backfilled-id',
       },
     });
 
     await manifestEndpoint(req, res);
 
-    expect(UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync).toHaveBeenCalledWith(
-      '1.2.0'
-    );
-    expect(UpdateHelper.createNoUpdateAvailableDirectiveAsync).not.toHaveBeenCalled();
+    expect(mockDatabase.setReleaseUpdateId).toHaveBeenCalledWith('release-id', 'backfilled-id');
+    expect(UpdateHelper.getLatestUpdateBundlePathForRuntimeVersionAsync).not.toHaveBeenCalled();
   });
 
   it('should handle normal update successfully', async () => {
@@ -265,7 +274,9 @@ describe('Manifest API', () => {
   it('should handle rollback update successfully', async () => {
     // Mock database
     const mockDatabase = {
-      getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(null),
+      getLatestReleaseRecordForRuntimeVersion: jest
+        .fn()
+        .mockResolvedValue({ path: 'path/to/update.zip', updateId: 'rollback-id' }),
     } as unknown as DatabaseInterface;
 
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);

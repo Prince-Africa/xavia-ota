@@ -69,7 +69,12 @@ describe('Upload API', () => {
       uploadFile: jest.fn().mockResolvedValue('updates/1.0.0/timestamp.zip'),
     };
     const mockDatabase = {
-      createRelease: jest.fn().mockResolvedValue(true),
+      getReleaseByUpdateId: jest.fn().mockResolvedValue(null),
+      createRelease: jest
+        .fn()
+        .mockImplementation(async (release) => ({ id: 'release-id', ...release })),
+      activateRelease: jest.fn().mockResolvedValue(undefined),
+      failRelease: jest.fn(),
     };
     (StorageFactory.getStorage as jest.Mock).mockReturnValue(mockStorage);
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
@@ -80,19 +85,25 @@ describe('Upload API', () => {
 
     // Verify results
     expect(res._getStatusCode()).toBe(200);
-    expect(JSON.parse(res._getData())).toMatchSnapshot();
+    expect(JSON.parse(res._getData())).toEqual({
+      success: true,
+      path: expect.stringMatching(/^updates\/1\.0\.0\/[0-9a-f-]+\.zip$/),
+      updateId: mockUpdateId,
+    });
 
     // Verify all mocks were called correctly
     expect(mockStorage.uploadFile).toHaveBeenCalled();
     expect(mockDatabase.createRelease).toHaveBeenCalledWith({
-      path: 'updates/1.0.0/timestamp.zip',
+      path: expect.stringMatching(/^updates\/1\.0\.0\/[0-9a-f-]+\.zip$/),
       runtimeVersion: '1.0.0',
       timestamp: expect.any(String),
       commitHash: 'abc123',
       commitMessage: 'Test commit message',
       updateId: mockUpdateId,
       repositoryUrl: 'https://github.com/acme/mobile-app',
+      status: 'uploading',
     });
+    expect(mockDatabase.activateRelease).toHaveBeenCalledWith('release-id');
     expect(ZipHelper.getFileFromZip).toHaveBeenCalledWith(mockZipFolder, 'metadata.json');
     expect(HashHelper.createHash).toHaveBeenCalledWith(mockMetadataContent, 'sha256', 'hex');
     expect(HashHelper.convertSHA256HashToUUID).toHaveBeenCalledWith(mockHash);
@@ -110,6 +121,90 @@ describe('Upload API', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(JSON.parse(res._getData())).toMatchSnapshot();
+  });
+
+  it('returns an existing release without uploading it again', async () => {
+    (formidable as unknown as jest.Mock).mockReturnValue({
+      parse: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            uploadKey: [process.env.UPLOAD_KEY],
+            runtimeVersion: ['1.0.0'],
+            commitHash: ['abc'],
+            repositoryUrl: ['https://github.com/acme/app'],
+          },
+          { file: [{ filepath: 'test.zip' }] },
+        ]),
+    });
+    jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('zip'));
+    (AdmZip as unknown as jest.Mock).mockImplementation(() => ({}));
+    (ZipHelper.getFileFromZip as jest.Mock).mockResolvedValue(Buffer.from('metadata'));
+    (HashHelper.createHash as jest.Mock).mockReturnValue('hash');
+    (HashHelper.convertSHA256HashToUUID as jest.Mock).mockReturnValue('existing-id');
+    const database = {
+      getReleaseByUpdateId: jest
+        .fn()
+        .mockResolvedValue({ path: 'updates/1.0.0/existing.zip', status: 'active' }),
+      createRelease: jest.fn(),
+      activateRelease: jest.fn(),
+    };
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
+
+    const { req, res } = createMocks({ method: 'POST' });
+    await uploadHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(JSON.parse(res._getData())).toEqual({
+      success: true,
+      path: 'updates/1.0.0/existing.zip',
+      updateId: 'existing-id',
+    });
+    expect(database.createRelease).not.toHaveBeenCalled();
+    expect(database.activateRelease).not.toHaveBeenCalled();
+    expect(StorageFactory.getStorage).not.toHaveBeenCalled();
+  });
+
+  it('marks the release failed when storage upload fails', async () => {
+    (formidable as unknown as jest.Mock).mockReturnValue({
+      parse: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            uploadKey: [process.env.UPLOAD_KEY],
+            runtimeVersion: ['1.0.0'],
+            commitHash: ['abc'],
+            repositoryUrl: ['https://github.com/acme/app'],
+          },
+          { file: [{ filepath: 'test.zip' }] },
+        ]),
+    });
+    jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('zip'));
+    (AdmZip as unknown as jest.Mock).mockImplementation(() => ({}));
+    (ZipHelper.getFileFromZip as jest.Mock).mockResolvedValue(Buffer.from('metadata'));
+    (HashHelper.createHash as jest.Mock).mockReturnValue('hash');
+    (HashHelper.convertSHA256HashToUUID as jest.Mock).mockReturnValue('new-id');
+    const database = {
+      getReleaseByUpdateId: jest.fn().mockResolvedValue(null),
+      createRelease: jest
+        .fn()
+        .mockImplementation(async (release) => ({ id: 'new-release', ...release })),
+      activateRelease: jest.fn(),
+      failRelease: jest.fn(),
+    };
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
+    (StorageFactory.getStorage as jest.Mock).mockReturnValue({
+      uploadFile: jest.fn().mockRejectedValue(new Error('storage unavailable')),
+    });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { req, res } = createMocks({ method: 'POST' });
+    await uploadHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(500);
+    expect(database.failRelease).toHaveBeenCalledWith('new-release');
+    expect(database.activateRelease).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it.each([undefined, 'not a url'])(

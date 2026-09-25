@@ -1,6 +1,4 @@
-import { DatabaseInterface } from './DatabaseInterface';
 import { PostgresDatabase } from './LocalDatabase';
-import { SupabaseDatabase } from './SupabaseDatabase';
 
 export enum Tables {
   RELEASES = 'releases',
@@ -8,12 +6,10 @@ export enum Tables {
 }
 
 export class DatabaseFactory {
-  private static instance: DatabaseInterface;
+  private static instance: PostgresDatabase;
 
-  static getDatabase(): DatabaseInterface {
-    if (process.env.DB_TYPE === 'supabase') {
-      DatabaseFactory.instance = new SupabaseDatabase();
-    } else if (process.env.DB_TYPE === 'postgres') {
+  static getDatabase(): PostgresDatabase {
+    if (process.env.DB_TYPE === 'postgres') {
       DatabaseFactory.instance = new PostgresDatabase();
     } else {
       throw new Error('Unsupported database type');

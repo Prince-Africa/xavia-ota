@@ -13,7 +13,10 @@ async function runMigrations(client, directory = migrationsDir) {
     return;
   }
 
-  const files = fs.readdirSync(directory).filter((name) => name.endsWith('.sql')).sort();
+  const files = fs
+    .readdirSync(directory)
+    .filter((name) => name.endsWith('.sql'))
+    .sort();
   if (files.length === 0) {
     console.log('No database migrations to run.');
     return;
@@ -36,7 +39,7 @@ async function runMigrations(client, directory = migrationsDir) {
       const checksum = crypto.createHash('sha256').update(sql).digest('hex');
       const previous = await client.query(
         'SELECT checksum FROM xavia_schema_migrations WHERE filename = $1',
-        [filename],
+        [filename]
       );
       if (previous.rows.length) {
         if (previous.rows[0].checksum.trim() !== checksum) {
@@ -51,7 +54,7 @@ async function runMigrations(client, directory = migrationsDir) {
         await client.query(sql);
         await client.query(
           'INSERT INTO xavia_schema_migrations (filename, checksum) VALUES ($1, $2)',
-          [filename, checksum],
+          [filename, checksum]
         );
         await client.query('COMMIT');
         console.log(`Applied: ${filename}`);
@@ -66,12 +69,27 @@ async function runMigrations(client, directory = migrationsDir) {
 }
 
 async function main() {
-  const secret = JSON.parse(execFileSync('aws', [
-    'secretsmanager', 'get-secret-value',
-    '--secret-id', process.env.DATABASE_SECRET_ARN,
-    '--query', 'SecretString',
-    '--output', 'text',
-  ], { encoding: 'utf8' }));
+  const secret = process.env.DATABASE_SECRET_ARN
+    ? JSON.parse(
+        execFileSync(
+          'aws',
+          [
+            'secretsmanager',
+            'get-secret-value',
+            '--secret-id',
+            process.env.DATABASE_SECRET_ARN,
+            '--query',
+            'SecretString',
+            '--output',
+            'text',
+          ],
+          { encoding: 'utf8' }
+        )
+      )
+    : {
+        POSTGRES_USER: process.env.POSTGRES_USER,
+        POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
+      };
 
   const client = new Client({
     host: process.env.POSTGRES_HOST,

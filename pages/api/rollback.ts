@@ -1,9 +1,9 @@
-import moment from 'moment';
 import { NextApiRequest, NextApiResponse } from 'next';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
-import { StorageFactory } from '../../apiUtils/storage/StorageFactory';
 import { hasAdminSession } from '../../apiUtils/helpers/AdminSession';
+import { HashHelper } from '../../apiUtils/helpers/HashHelper';
+import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 
 export default async function rollbackHandler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -16,7 +16,7 @@ export default async function rollbackHandler(req: NextApiRequest, res: NextApiR
     return;
   }
 
-  const { path, runtimeVersion, commitHash, commitMessage } = req.body;
+  const { path, runtimeVersion } = req.body;
 
   if (!path) {
     res.status(400).json({ error: 'Missing path' });
@@ -28,32 +28,29 @@ export default async function rollbackHandler(req: NextApiRequest, res: NextApiR
     return;
   }
 
-  if (!commitHash) {
-    res.status(400).json({ error: 'Missing commitHash' });
-    return;
-  }
-
   try {
-    const storage = StorageFactory.getStorage();
-
-    const timestamp = moment().utc().format('YYYYMMDDHHmmss');
-    const newPath = `updates/${runtimeVersion}/${timestamp}.zip`;
-
-    await storage.copyFile(path, newPath);
-
     const database = DatabaseFactory.getDatabase();
-    const source = await database.getReleaseByPath(path).catch(() => null);
-
-    await database.createRelease({
-      path: newPath,
-      runtimeVersion,
-      timestamp: moment().utc().toString(),
-      commitHash,
-      commitMessage,
-      repositoryUrl: source?.repositoryUrl ?? null,
-    });
-
-    res.status(200).json({ success: true, newPath });
+    const source = await database.getReleaseByPath(path);
+    if (
+      !source ||
+      source.runtimeVersion !== runtimeVersion ||
+      source.status === 'failed' ||
+      source.status === 'uploading'
+    ) {
+      res.status(404).json({ error: 'Release not found' });
+      return;
+    }
+    let updateId = source.updateId;
+    if (!updateId) {
+      const zip = await ZipHelper.getZipFromStorage(source.path.replace(/\.zip$/, ''));
+      const metadata = await ZipHelper.getFileFromZip(zip, 'metadata.json');
+      updateId = HashHelper.convertSHA256HashToUUID(
+        HashHelper.createHash(metadata, 'sha256', 'hex')
+      );
+      await database.setReleaseUpdateId(source.id, updateId);
+    }
+    await database.activateRelease(source.id);
+    res.status(200).json({ success: true, newPath: source.path, updateId });
   } catch (error) {
     console.error('Rollback error:', error);
     res.status(500).json({ error: 'Rollback failed' });

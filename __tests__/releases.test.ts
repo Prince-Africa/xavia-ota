@@ -35,7 +35,10 @@ describe('Releases API', () => {
       listReleases: jest.fn().mockResolvedValue([
         {
           path: 'updates/1.0.0/update.zip',
+          runtimeVersion: '1.0.0',
+          timestamp: '2024-03-20T00:00:00Z',
           commitHash: 'abc123',
+          status: 'active',
         },
       ]),
     };
@@ -47,10 +50,17 @@ describe('Releases API', () => {
     await releasesHandler(req, res);
 
     expect(res._getStatusCode()).toBe(200);
-    expect(JSON.parse(res._getData())).toMatchSnapshot();
+    expect(JSON.parse(res._getData()).releases).toEqual([
+      expect.objectContaining({
+        path: 'updates/1.0.0/update.zip',
+        runtimeVersion: '1.0.0',
+        size: 1000,
+        status: 'active',
+      }),
+    ]);
   });
 
-  it('dates releases by their bundle file name, not the file creation time', async () => {
+  it('lists only database releases, not orphaned archives', async () => {
     const mockStorage = {
       listDirectories: jest.fn().mockResolvedValue(['1.1.2', '1.2.0']),
       listFiles: jest.fn().mockImplementation(async (folder: string) =>
@@ -80,12 +90,7 @@ describe('Releases API', () => {
     await releasesHandler(req, res);
 
     const { releases } = JSON.parse(res._getData());
-    expect(releases.map((r: { path: string; timestamp: string }) => [r.path, r.timestamp])).toEqual(
-      [
-        ['updates/1.1.2/20260801090000.zip', '2026-08-01T10:00:00.000+01:00'],
-        ['updates/1.2.0/20260925113047.zip', '2026-09-25T12:30:47.000+01:00'],
-      ]
-    );
+    expect(releases).toEqual([]);
   });
 
   it('should handle errors gracefully', async () => {

@@ -25,9 +25,8 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl"
-      FROM ${Tables.RELEASES} WHERE runtime_version = $1
-      ORDER BY timestamp DESC
+             repository_url as "repositoryUrl", status
+      FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND status = 'active'
       LIMIT 1
     `;
 
@@ -38,11 +37,88 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl"
+             repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE path = $1
     `;
     const { rows } = await this.pool.query(query, [path]);
     return rows[0] || null;
+  }
+
+  async getReleaseByUpdateId(runtimeVersion: string, updateId: string): Promise<Release | null> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
+             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
+             repository_url as "repositoryUrl", status
+      FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND update_id = $2
+    `,
+      [runtimeVersion, updateId]
+    );
+    return rows[0] || null;
+  }
+
+  async activateRelease(id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT runtime_version FROM ${Tables.RELEASES} WHERE id = $1`,
+        [id]
+      );
+      if (!rows.length) throw new Error('Release not found');
+      // Serialize activations for the same runtime, including concurrent uploads.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [rows[0].runtime_version]);
+      await client.query(`SELECT id FROM ${Tables.RELEASES} WHERE id = $1 FOR UPDATE`, [id]);
+      await client.query(
+        `UPDATE ${Tables.RELEASES} SET status = 'inactive' WHERE runtime_version = $1 AND status = 'active'`,
+        [rows[0].runtime_version]
+      );
+      await client
+        .query(
+          `UPDATE ${Tables.RELEASES} SET status = 'active' WHERE id = $1 AND status IN ('uploading', 'inactive', 'active') RETURNING id`,
+          [id]
+        )
+        .then((result) => {
+          if (!result.rowCount) throw new Error('Release cannot be activated');
+        });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async failRelease(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${Tables.RELEASES} SET status = 'failed' WHERE id = $1 AND status = 'uploading'`,
+      [id]
+    );
+  }
+
+  async retryFailedRelease(id: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ${Tables.RELEASES} SET status = 'uploading' WHERE id = $1 AND status = 'failed'`,
+      [id]
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async retryStaleUpload(id: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ${Tables.RELEASES} SET timestamp = now()
+       WHERE id = $1 AND status = 'uploading' AND timestamp < now() - interval '15 minutes'`,
+      [id]
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async setReleaseUpdateId(id: string, updateId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${Tables.RELEASES} SET update_id = $2 WHERE id = $1 AND update_id IS NULL`,
+      [id, updateId]
+    );
   }
 
   async createTracking(
@@ -93,10 +169,10 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async createRelease(release: Omit<Release, 'id'>): Promise<Release> {
     const query = `
-      INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id, runtime_version as "runtimeVersion", path, timestamp, commit_hash as "commitHash", update_id as "updateId",
-                repository_url as "repositoryUrl"
+                commit_message as "commitMessage", repository_url as "repositoryUrl", status
     `;
 
     const values = [
@@ -107,6 +183,7 @@ export class PostgresDatabase implements DatabaseInterface {
       release.commitMessage,
       release.updateId,
       release.repositoryUrl ?? null,
+      release.status ?? 'inactive',
     ];
     const { rows } = await this.pool.query(query, values);
     return rows[0];
@@ -116,7 +193,7 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl"
+             repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE id = $1
     `;
 
@@ -128,7 +205,7 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl"
+             repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES}
       ORDER BY timestamp DESC
     `;
