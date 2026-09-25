@@ -6,6 +6,7 @@ export interface Release {
   commitHash: string;
   commitMessage: string;
   updateId?: string;
+  repositoryUrl?: string | null;
 }
 
 export interface Tracking {

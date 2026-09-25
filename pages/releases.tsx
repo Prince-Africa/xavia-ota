@@ -22,6 +22,7 @@ import moment from 'moment';
 import { useEffect, useRef, useState } from 'react';
 import { FiRefreshCw, FiRotateCcw } from 'react-icons/fi';
 
+import CommitHash from '../components/CommitHash';
 import Layout from '../components/Layout';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PageHeader from '../components/PageHeader';
@@ -160,9 +161,15 @@ export default function ReleasesPage() {
                     </Td>
                     <Td>
                       <Tooltip label={release.commitHash} isDisabled={!release.commitHash}>
-                        <Text fontFamily="mono" fontSize="xs" color="muted">
-                          {release.commitHash?.slice(0, 7) ?? '—'}
-                        </Text>
+                        <Box as="span" display="inline-block">
+                          <CommitHash
+                            hash={release.commitHash}
+                            repositoryUrl={release.repositoryUrl}
+                            fontFamily="mono"
+                            fontSize="xs"
+                            color="muted"
+                          />
+                        </Box>
                       </Tooltip>
                     </Td>
                     <Td>

@@ -24,7 +24,8 @@ export class PostgresDatabase implements DatabaseInterface {
   async getLatestReleaseRecordForRuntimeVersion(runtimeVersion: string): Promise<Release | null> {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId"
+             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
+             repository_url as "repositoryUrl"
       FROM ${Tables.RELEASES} WHERE runtime_version = $1
       ORDER BY timestamp DESC
       LIMIT 1
@@ -36,7 +37,8 @@ export class PostgresDatabase implements DatabaseInterface {
   async getReleaseByPath(path: string): Promise<Release | null> {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId"
+             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
+             repository_url as "repositoryUrl"
       FROM ${Tables.RELEASES} WHERE path = $1
     `;
     const { rows } = await this.pool.query(query, [path]);
@@ -91,9 +93,10 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async createRelease(release: Omit<Release, 'id'>): Promise<Release> {
     const query = `
-      INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, runtime_version as "runtimeVersion", path, timestamp, commit_hash as "commitHash", update_id as "updateId"
+      INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, runtime_version as "runtimeVersion", path, timestamp, commit_hash as "commitHash", update_id as "updateId",
+                repository_url as "repositoryUrl"
     `;
 
     const values = [
@@ -103,6 +106,7 @@ export class PostgresDatabase implements DatabaseInterface {
       release.commitHash,
       release.commitMessage,
       release.updateId,
+      release.repositoryUrl ?? null,
     ];
     const { rows } = await this.pool.query(query, values);
     return rows[0];
@@ -111,7 +115,8 @@ export class PostgresDatabase implements DatabaseInterface {
   async getRelease(id: string): Promise<Release | null> {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId"
+             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
+             repository_url as "repositoryUrl"
       FROM ${Tables.RELEASES} WHERE id = $1
     `;
 
@@ -122,7 +127,8 @@ export class PostgresDatabase implements DatabaseInterface {
   async listReleases(): Promise<Release[]> {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId"
+             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
+             repository_url as "repositoryUrl"
       FROM ${Tables.RELEASES}
       ORDER BY timestamp DESC
     `;

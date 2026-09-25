@@ -43,6 +43,7 @@ export class SupabaseDatabase implements DatabaseInterface {
         commitHash: data.commit_hash,
         commitMessage: data.commit_message,
         updateId: data.update_id,
+        repositoryUrl: data.repository_url,
       };
     }
 
@@ -57,8 +58,18 @@ export class SupabaseDatabase implements DatabaseInterface {
       .single();
 
     if (error) throw new Error(error.message);
+    if (!data) return null;
 
-    return data || null;
+    return {
+      id: data.id,
+      runtimeVersion: data.runtime_version,
+      path: data.path,
+      timestamp: data.timestamp,
+      commitHash: data.commit_hash,
+      commitMessage: data.commit_message,
+      updateId: data.update_id,
+      repositoryUrl: data.repository_url,
+    };
   }
 
   async getReleaseTrackingMetricsForAllReleases(): Promise<TrackingMetrics[]> {
@@ -147,6 +158,7 @@ export class SupabaseDatabase implements DatabaseInterface {
         commit_hash: release.commitHash,
         commit_message: release.commitMessage,
         update_id: release.updateId,
+        repository_url: release.repositoryUrl ?? null,
       })
       .select()
       .single();
@@ -171,6 +183,7 @@ export class SupabaseDatabase implements DatabaseInterface {
       timestamp: data.timestamp,
       commitHash: data.commit_hash,
       commitMessage: data.commit_message,
+      repositoryUrl: data.repository_url,
     };
   }
 
@@ -189,6 +202,7 @@ export class SupabaseDatabase implements DatabaseInterface {
       size: release.size,
       commitHash: release.commit_hash,
       commitMessage: release.commit_message,
+      repositoryUrl: release.repository_url,
     }));
   }
 }

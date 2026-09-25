@@ -9,6 +9,7 @@ import { StorageFactory } from '../../apiUtils/storage/StorageFactory';
 import AdmZip from 'adm-zip';
 import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 import { HashHelper } from '../../apiUtils/helpers/HashHelper';
+import { RepositoryHelper } from '../../apiUtils/helpers/RepositoryHelper';
 
 export const config = {
   api: {
@@ -31,6 +32,7 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
     const runtimeVersion = fields.runtimeVersion?.[0];
     const commitHash = fields.commitHash?.[0];
     const commitMessage = fields.commitMessage?.[0] || 'No message provided';
+    const repositoryUrl = RepositoryHelper.toBrowserUrl(fields.repositoryUrl?.[0]);
 
     if (!uploadKey || !file || !runtimeVersion || !commitHash) {
       res.status(400).json({ error: 'Missing upload key, file, runtime version or commit hash' });
@@ -63,6 +65,7 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
       commitHash,
       commitMessage,
       updateId,
+      repositoryUrl,
     });
 
     res.status(200).json({ success: true, path });

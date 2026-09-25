@@ -9,6 +9,8 @@ fi
 # Get the current commit hash and message
 commitHash=$(git rev-parse HEAD)
 commitMessage=$(git log -1 --pretty=%B)
+# Strip any credentials embedded in the remote URL before it leaves this machine
+repositoryUrl=$(git remote get-url origin 2>/dev/null | sed -E 's#://[^/@]+@#://#')
 
 # Assign arguments to variables
 runtimeVersion=$1
@@ -24,6 +26,7 @@ echo "Output Folder: $outputFolder"
 echo "Runtime Version: $runtimeVersion"
 echo "Commit Hash: $commitHash"
 echo "Commit Message: $commitMessage"
+echo "Repository: ${repositoryUrl:-none (no origin remote)}"
 
 read -p "Do you want to proceed with these values? (y/n): " confirm
 
@@ -48,7 +51,7 @@ zip -q -r ${timestamp}.zip .
 
 
 # Upload the zip file to the server
-curl -X POST $serverHost/api/upload -F "file=@${timestamp}.zip" -F "runtimeVersion=$runtimeVersion" -F "commitHash=$commitHash" -F "commitMessage=$commitMessage" -F "uploadKey=$uploadKey"
+curl -X POST $serverHost/api/upload -F "file=@${timestamp}.zip" -F "runtimeVersion=$runtimeVersion" -F "commitHash=$commitHash" -F "commitMessage=$commitMessage" -F "repositoryUrl=$repositoryUrl" -F "uploadKey=$uploadKey"
 
 echo ""
 

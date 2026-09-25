@@ -37,6 +37,7 @@ describe('Upload API', () => {
           runtimeVersion: ['1.0.0'],
           commitHash: ['abc123'],
           commitMessage: ['Test commit message'],
+          repositoryUrl: ['git@github.com:acme/mobile-app.git'],
         },
         {
           file: [{ filepath: 'test.zip' }],
@@ -90,6 +91,7 @@ describe('Upload API', () => {
       commitHash: 'abc123',
       commitMessage: 'Test commit message',
       updateId: mockUpdateId,
+      repositoryUrl: 'https://github.com/acme/mobile-app',
     });
     expect(ZipHelper.getFileFromZip).toHaveBeenCalledWith(mockZipFolder, 'metadata.json');
     expect(HashHelper.createHash).toHaveBeenCalledWith(mockMetadataContent, 'sha256', 'hex');

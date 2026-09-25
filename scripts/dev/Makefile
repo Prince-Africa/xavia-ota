@@ -21,6 +21,7 @@ check-db:
 
 migrate:
 	$(COMPOSE) exec -T xavia-postgres psql -U postgres -d releases_db -v ON_ERROR_STOP=1 < ./containers/database/migrations/20260925_installation_tracking.sql
+	$(COMPOSE) exec -T xavia-postgres psql -U postgres -d releases_db -v ON_ERROR_STOP=1 < ./containers/database/migrations/20260925_release_repository_url.sql
 
 db-stop:
 	$(COMPOSE) stop

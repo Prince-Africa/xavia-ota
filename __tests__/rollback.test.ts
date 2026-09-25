@@ -52,6 +52,9 @@ describe('Rollback API', () => {
     };
 
     const mockDatabase = {
+      getReleaseByPath: jest
+        .fn()
+        .mockResolvedValue({ repositoryUrl: 'https://github.com/acme/app' }),
       createRelease: jest.fn().mockResolvedValue(true),
     };
 
@@ -73,6 +76,9 @@ describe('Rollback API', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(res._getData()).toMatchSnapshot();
     expect(mockStorage.copyFile).toHaveBeenCalled();
-    expect(mockDatabase.createRelease).toHaveBeenCalled();
+    expect(mockDatabase.getReleaseByPath).toHaveBeenCalledWith('updates/1.0.0/old.zip');
+    expect(mockDatabase.createRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryUrl: 'https://github.com/acme/app' })
+    );
   });
 });

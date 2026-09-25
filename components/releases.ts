@@ -5,6 +5,7 @@ export interface Release {
   size: number;
   commitHash: string | null;
   commitMessage: string | null;
+  repositoryUrl: string | null;
 }
 
 export function formatFileSize(bytes: number): string {

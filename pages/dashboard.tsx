@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { FiArrowRight } from 'react-icons/fi';
 
 import { TrackingMetrics } from '../apiUtils/database/DatabaseInterface';
+import CommitHash from '../components/CommitHash';
 import Layout from '../components/Layout';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PageHeader from '../components/PageHeader';
@@ -150,9 +151,10 @@ export default function Dashboard() {
                     gap={4}
                     wrap="wrap">
                     <Flex gap={5} fontFamily="mono" fontSize="xs" color="muted" wrap="wrap">
-                      <Text title={latestRelease.commitHash ?? undefined}>
-                        {latestRelease.commitHash?.slice(0, 7) ?? 'no commit'}
-                      </Text>
+                      <CommitHash
+                        hash={latestRelease.commitHash}
+                        repositoryUrl={latestRelease.repositoryUrl}
+                      />
                       <Text>{formatFileSize(latestRelease.size)}</Text>
                       <Text>
                         {moment(latestRelease.timestamp).utc().format('MMM D, HH:mm')} UTC
