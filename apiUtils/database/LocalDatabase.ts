@@ -240,6 +240,31 @@ export class PostgresDatabase implements DatabaseInterface {
     return rows.map((row) => ({ month: row.month, count: Number(row.count) }));
   }
 
+  async getRuntimeInstallationMetrics(runtimeVersion: string): Promise<{
+    iosInstalls: number;
+    androidInstalls: number;
+    uniqueInstallsThisMonth: number;
+  }> {
+    const { rows } = await this.pool.query(
+      `SELECT
+         COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'ios') AS "iosInstalls",
+         COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'android') AS "androidInstalls",
+         COUNT(DISTINCT t.installation_id) FILTER (
+           WHERE date_trunc('month', t.download_timestamp + interval '1 hour') =
+                 date_trunc('month', (now() AT TIME ZONE 'UTC') + interval '1 hour')
+         ) AS "uniqueInstallsThisMonth"
+       FROM ${Tables.RELEASES_TRACKING} t
+       JOIN ${Tables.RELEASES} r ON r.id = t.release_id
+       WHERE r.runtime_version = $1 AND t.installation_id IS NOT NULL`,
+      [runtimeVersion]
+    );
+    return {
+      iosInstalls: Number(rows[0].iosInstalls),
+      androidInstalls: Number(rows[0].androidInstalls),
+      uniqueInstallsThisMonth: Number(rows[0].uniqueInstallsThisMonth),
+    };
+  }
+
   async createRelease(release: Omit<Release, 'id'>): Promise<Release> {
     const query = `
       INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url, status)

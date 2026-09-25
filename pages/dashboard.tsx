@@ -1,4 +1,4 @@
-import { Box, Button, Flex, Grid, Heading, Text } from '@chakra-ui/react';
+import { Box, Button, Flex, Grid, Heading, Link, Text } from '@chakra-ui/react';
 import { keyframes } from '@emotion/react';
 import moment from 'moment';
 import NextLink from 'next/link';
@@ -198,9 +198,13 @@ export default function Dashboard() {
                     py={3}
                     borderTop="1px solid"
                     borderColor="line">
-                    <Text fontFamily="mono" fontSize="sm">
+                    <Link
+                      as={NextLink}
+                      href={`/releases/${encodeURIComponent(release.runtimeVersion)}`}
+                      fontFamily="mono"
+                      fontSize="sm">
                       {release.runtimeVersion}
-                    </Text>
+                    </Link>
                     <Text fontFamily="mono" fontSize="xs" color="muted">
                       {release.commitHash || 'Unknown commit'}
                     </Text>

@@ -17,18 +17,22 @@ import {
   AlertDialogBody,
   AlertDialogFooter,
   Tooltip,
+  SimpleGrid,
+  Link,
 } from '@chakra-ui/react';
 import moment from 'moment';
-import { useEffect, useRef, useState } from 'react';
-import { FiRefreshCw, FiRotateCcw } from 'react-icons/fi';
+import NextLink from 'next/link';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { FiArrowLeft, FiRefreshCw, FiRotateCcw } from 'react-icons/fi';
 
-import CommitHash from '../components/CommitHash';
-import Layout from '../components/Layout';
-import LoadingSpinner from '../components/LoadingSpinner';
-import PageHeader from '../components/PageHeader';
-import ProtectedRoute from '../components/ProtectedRoute';
-import { formatFileSize, Release } from '../components/releases';
-import { showToast } from '../components/toast';
+import CommitHash from '../../components/CommitHash';
+import Layout from '../../components/Layout';
+import LoadingSpinner from '../../components/LoadingSpinner';
+import PageHeader from '../../components/PageHeader';
+import ProtectedRoute from '../../components/ProtectedRoute';
+import { formatFileSize, Release } from '../../components/releases';
+import { showToast } from '../../components/toast';
 
 interface RollbackPreview {
   runtimeVersion: string;
@@ -39,7 +43,17 @@ interface RollbackPreview {
   blockedReason: string | null;
 }
 
-export default function ReleasesPage() {
+interface RuntimeMetrics {
+  iosInstalls: number;
+  androidInstalls: number;
+  uniqueInstallsThisMonth: number;
+}
+
+export default function RuntimeReleasesPage() {
+  const router = useRouter();
+  const runtimeVersion =
+    typeof router.query.runtimeVersion === 'string' ? router.query.runtimeVersion : '';
+  const [metrics, setMetrics] = useState<RuntimeMetrics | null>(null);
   const [releases, setReleases] = useState<Release[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,25 +65,36 @@ export default function ReleasesPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    fetchReleases();
-  }, []);
-
-  const fetchReleases = async () => {
+  const fetchReleases = useCallback(async () => {
+    if (!runtimeVersion) return;
+    setLoading(true);
     try {
-      const response = await fetch('/api/releases');
-      if (!response.ok) {
-        throw new Error('Failed to fetch releases');
+      const [releasesResponse, metricsResponse] = await Promise.all([
+        fetch('/api/releases'),
+        fetch(`/api/runtimes/${encodeURIComponent(runtimeVersion)}`),
+      ]);
+      if (!releasesResponse.ok || !metricsResponse.ok) {
+        throw new Error('Failed to fetch runtime releases');
       }
-      const data = await response.json();
-      setReleases(data.releases);
+      const [releaseData, metricData] = await Promise.all([
+        releasesResponse.json(),
+        metricsResponse.json(),
+      ]);
+      setReleases(
+        releaseData.releases.filter((release: Release) => release.runtimeVersion === runtimeVersion)
+      );
+      setMetrics(metricData);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch releases');
+      setError(err instanceof Error ? err.message : 'Failed to fetch runtime releases');
     } finally {
       setLoading(false);
     }
-  };
+  }, [runtimeVersion]);
+
+  useEffect(() => {
+    fetchReleases();
+  }, [fetchReleases]);
 
   const rollBack = async () => {
     if (!selectedRelease || !rollbackPreview || rollbackPreview.blockedReason) return;
@@ -128,12 +153,13 @@ export default function ReleasesPage() {
   const sortedReleases = [...releases].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
+  const activeRelease = releases.find((release) => release.status === 'active');
 
   return (
     <ProtectedRoute>
       <Layout>
         <PageHeader
-          title="Releases"
+          title={`Runtime ${runtimeVersion}`}
           actions={
             <IconButton
               aria-label="Refresh releases"
@@ -146,16 +172,94 @@ export default function ReleasesPage() {
           }
         />
 
+        <Link
+          as={NextLink}
+          href="/releases"
+          display="inline-flex"
+          alignItems="center"
+          gap={2}
+          color="muted"
+          fontSize="sm"
+          mb={6}>
+          <FiArrowLeft /> All runtime versions
+        </Link>
+
+        {!loading && !error && metrics && (
+          <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4} mb={8}>
+            {(
+              [
+                ['iOS installs', metrics.iosInstalls],
+                ['Android installs', metrics.androidInstalls],
+                ['Releases published', releases.length],
+                ['Unique installs this month', metrics.uniqueInstallsThisMonth],
+              ] as const
+            ).map(([label, value]) => (
+              <Box
+                key={label}
+                bg="panel"
+                border="1px solid"
+                borderColor="line"
+                borderRadius="14px"
+                p={5}>
+                <Text color="muted" fontSize="sm">
+                  {label}
+                </Text>
+                <Text fontFamily="mono" fontSize="2xl" mt={2}>
+                  {value.toLocaleString()}
+                </Text>
+              </Box>
+            ))}
+          </SimpleGrid>
+        )}
+
+        {!loading && !error && activeRelease && (
+          <Box bg="panel" border="1px solid" borderColor="line" borderRadius="14px" p={5} mb={6}>
+            <Flex align="center" gap={2} color="verified.text" fontSize="xs" mb={3}>
+              <Box boxSize="6px" borderRadius="full" bg="verified.dot" />
+              Live OTA
+            </Flex>
+            <Flex gap={{ base: 4, md: 10 }} wrap="wrap" align="start">
+              <Box>
+                <Text color="muted" fontSize="xs">
+                  Commit
+                </Text>
+                <Box mt={1} fontFamily="mono" fontSize="sm">
+                  <CommitHash
+                    hash={activeRelease.commitHash}
+                    repositoryUrl={activeRelease.repositoryUrl}
+                  />
+                </Box>
+              </Box>
+              <Box minW={0}>
+                <Text color="muted" fontSize="xs">
+                  Update ID
+                </Text>
+                <Text mt={1} fontFamily="mono" fontSize="xs" wordBreak="break-all">
+                  {activeRelease.updateId || 'Unavailable'}
+                </Text>
+              </Box>
+              <Box>
+                <Text color="muted" fontSize="xs">
+                  Published
+                </Text>
+                <Text mt={1} fontSize="sm">
+                  {moment(activeRelease.timestamp).utcOffset(60).format('MMM D, YYYY HH:mm')}
+                </Text>
+              </Box>
+            </Flex>
+          </Box>
+        )}
+
         {loading && <LoadingSpinner py={24} />}
         {error && (
           <Text color="primary.300" fontSize="sm">
-            Couldn't load releases. Check that the storage bucket is reachable, then refresh.
+            Couldn't load this runtime. Please refresh.
           </Text>
         )}
 
         {!loading && !error && sortedReleases.length === 0 && (
           <Box bg="panel" border="1px solid" borderColor="line" borderRadius="14px" p={8}>
-            <Text fontWeight={600}>No releases yet</Text>
+            <Text fontWeight={600}>No OTA releases for this runtime</Text>
           </Box>
         )}
 
@@ -170,7 +274,6 @@ export default function ReleasesPage() {
               <Thead>
                 <Tr>
                   <Th>Release</Th>
-                  <Th>Runtime</Th>
                   <Th>Commit</Th>
                   <Th>Message</Th>
                   <Th>Published</Th>
@@ -191,9 +294,6 @@ export default function ReleasesPage() {
                           {release.path.split('/').pop()}
                         </Text>
                       </Tooltip>
-                    </Td>
-                    <Td fontFamily="mono" fontSize="xs">
-                      {release.runtimeVersion}
                     </Td>
                     <Td>
                       <Tooltip label={release.commitHash} isDisabled={!release.commitHash}>
