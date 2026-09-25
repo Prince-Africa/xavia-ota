@@ -137,7 +137,7 @@ export default function ReleasesPage() {
                   <Th>Runtime</Th>
                   <Th>Commit</Th>
                   <Th>Message</Th>
-                  <Th>Published (UTC)</Th>
+                  <Th>Published (UTC+1)</Th>
                   <Th isNumeric>Size</Th>
                   <Th />
                 </Tr>
@@ -180,7 +180,7 @@ export default function ReleasesPage() {
                       </Tooltip>
                     </Td>
                     <Td whiteSpace="nowrap" color="muted">
-                      {moment(release.timestamp).utc().format('MMM D, HH:mm')}
+                      {moment(release.timestamp).utcOffset(60).format('MMM D, HH:mm')}
                     </Td>
                     <Td isNumeric fontFamily="mono" fontSize="xs" color="muted" whiteSpace="nowrap">
                       {formatFileSize(release.size)}

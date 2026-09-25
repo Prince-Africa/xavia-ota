@@ -44,6 +44,11 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
       return;
     }
 
+    if (!repositoryUrl) {
+      res.status(400).json({ error: 'Missing or invalid repository URL' });
+      return;
+    }
+
     const storage = StorageFactory.getStorage();
     const timestamp = moment().utc().format('YYYYMMDDHHmmss');
     const updatePath = `updates/${runtimeVersion}`;

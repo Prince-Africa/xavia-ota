@@ -1,4 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import moment from 'moment';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 import { UpdateHelper } from '../../apiUtils/helpers/UpdateHelper';
@@ -28,10 +29,13 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
         releases.push({
           path: release?.path || `${folderPath}/${file.name}`,
           runtimeVersion,
-          timestamp:
+          timestamp: moment(
             UpdateHelper.getPublishedAtFromFileName(file.name) ??
-            release?.timestamp ??
-            file.created_at,
+              release?.timestamp ??
+              file.created_at
+          )
+            .utcOffset(60)
+            .format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
           size: file.metadata.size,
           commitHash,
           commitMessage: release?.commitMessage,

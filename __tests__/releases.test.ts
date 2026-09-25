@@ -82,8 +82,8 @@ describe('Releases API', () => {
     const { releases } = JSON.parse(res._getData());
     expect(releases.map((r: { path: string; timestamp: string }) => [r.path, r.timestamp])).toEqual(
       [
-        ['updates/1.1.2/20260801090000.zip', '2026-08-01T09:00:00.000Z'],
-        ['updates/1.2.0/20260925113047.zip', '2026-09-25T11:30:47.000Z'],
+        ['updates/1.1.2/20260801090000.zip', '2026-08-01T10:00:00.000+01:00'],
+        ['updates/1.2.0/20260925113047.zip', '2026-09-25T12:30:47.000+01:00'],
       ]
     );
   });

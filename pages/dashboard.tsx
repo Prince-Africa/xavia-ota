@@ -157,7 +157,7 @@ export default function Dashboard() {
                       />
                       <Text>{formatFileSize(latestRelease.size)}</Text>
                       <Text>
-                        {moment(latestRelease.timestamp).utc().format('MMM D, HH:mm')} UTC
+                        {moment(latestRelease.timestamp).utcOffset(60).format('MMM D, HH:mm')} UTC+1
                       </Text>
                     </Flex>
                     <Button

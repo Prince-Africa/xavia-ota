@@ -111,4 +111,29 @@ describe('Upload API', () => {
     expect(res._getStatusCode()).toBe(400);
     expect(JSON.parse(res._getData())).toMatchSnapshot();
   });
+
+  it.each([undefined, 'not a url'])(
+    'rejects an absent or invalid repository URL: %p',
+    async (repositoryUrl) => {
+      (formidable as unknown as jest.Mock).mockReturnValue({
+        parse: jest.fn().mockResolvedValue([
+          {
+            uploadKey: [process.env.UPLOAD_KEY],
+            runtimeVersion: ['1.2.0'],
+            commitHash: ['abc123'],
+            repositoryUrl: repositoryUrl ? [repositoryUrl] : undefined,
+          },
+          { file: [{ filepath: 'test.zip' }] },
+        ]),
+      });
+
+      const { req, res } = createMocks({ method: 'POST' });
+      await uploadHandler(req, res);
+
+      expect(res._getStatusCode()).toBe(400);
+      expect(JSON.parse(res._getData())).toEqual({ error: 'Missing or invalid repository URL' });
+      expect(StorageFactory.getStorage).not.toHaveBeenCalled();
+      expect(DatabaseFactory.getDatabase).not.toHaveBeenCalled();
+    }
+  );
 });
