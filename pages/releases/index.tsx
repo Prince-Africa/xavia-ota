@@ -49,7 +49,6 @@ export default function ReleasesPage() {
     const controller = new AbortController();
     const timer = setTimeout(
       async () => {
-        setLoading(true);
         try {
           const query = new URLSearchParams({ search, page: String(page) });
           const response = await fetch(`/api/runtimes?${query}`, { signal: controller.signal });
