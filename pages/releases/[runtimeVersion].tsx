@@ -22,8 +22,8 @@ import {
 } from '@chakra-ui/react';
 import NextLink from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { FiArrowLeft, FiRefreshCw, FiRotateCcw } from 'react-icons/fi';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { FiArrowLeft, FiChevronDown, FiRefreshCw, FiRotateCcw } from 'react-icons/fi';
 
 import CommitHash from '../../components/CommitHash';
 import Layout from '../../components/Layout';
@@ -32,7 +32,7 @@ import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
 import { formatFileSize, Release } from '../../components/releases';
 import { showToast } from '../../components/toast';
-import { formatUtcTimestamp } from '../../components/time';
+import { formatWatTimestamp } from '../../components/time';
 
 interface RollbackPreview {
   runtimeVersion: string;
@@ -49,12 +49,29 @@ interface RuntimeMetrics {
   uniqueInstallsThisMonth: number;
 }
 
+interface ReleasePlatformMetrics {
+  platform: string;
+  uniqueInstallations: number;
+  manifestRequests: number;
+  downloadAttempts: number;
+  assetRequests: number;
+  bytesTransferred: number;
+}
+
+interface ReleaseMetricsState {
+  rows?: ReleasePlatformMetrics[];
+  loading?: boolean;
+  error?: boolean;
+}
+
 export default function RuntimeReleasesPage() {
   const router = useRouter();
   const runtimeVersion =
     typeof router.query.runtimeVersion === 'string' ? router.query.runtimeVersion : '';
   const [metrics, setMetrics] = useState<RuntimeMetrics | null>(null);
   const [releases, setReleases] = useState<Release[]>([]);
+  const [expandedReleaseId, setExpandedReleaseId] = useState<string | null>(null);
+  const [releaseMetrics, setReleaseMetrics] = useState<Record<string, ReleaseMetricsState>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -95,6 +112,25 @@ export default function RuntimeReleasesPage() {
   useEffect(() => {
     fetchReleases();
   }, [fetchReleases]);
+
+  const toggleRelease = async (releaseId: string, retry = false) => {
+    if (expandedReleaseId === releaseId && !retry) {
+      setExpandedReleaseId(null);
+      return;
+    }
+    setExpandedReleaseId(releaseId);
+    if (!retry && (releaseMetrics[releaseId]?.rows || releaseMetrics[releaseId]?.loading)) return;
+
+    setReleaseMetrics((current) => ({ ...current, [releaseId]: { loading: true } }));
+    try {
+      const response = await fetch(`/api/releases/${encodeURIComponent(releaseId)}/metrics`);
+      if (!response.ok) throw new Error('Failed to fetch release metrics');
+      const data = await response.json();
+      setReleaseMetrics((current) => ({ ...current, [releaseId]: { rows: data.metrics } }));
+    } catch {
+      setReleaseMetrics((current) => ({ ...current, [releaseId]: { error: true } }));
+    }
+  };
 
   const rollBack = async () => {
     if (!selectedRelease || !rollbackPreview || rollbackPreview.blockedReason) return;
@@ -243,7 +279,7 @@ export default function RuntimeReleasesPage() {
                   Published
                 </Text>
                 <Text mt={1} fontSize="sm">
-                  {formatUtcTimestamp(activeRelease.timestamp)}
+                  {formatWatTimestamp(activeRelease.timestamp)}
                 </Text>
               </Box>
             </Flex>
@@ -283,79 +319,172 @@ export default function RuntimeReleasesPage() {
               </Thead>
               <Tbody>
                 {sortedReleases.map((release) => (
-                  <Tr
-                    key={release.path}
-                    transition="background .15s"
-                    _hover={{ bg: 'rgba(255,255,255,.02)' }}
-                    _last={{ td: { borderBottom: 'none' } }}>
-                    <Td>
-                      <Tooltip label={release.path}>
-                        <Text fontFamily="mono" fontSize="xs" isTruncated maxW="12rem">
-                          {release.path.split('/').pop()}
-                        </Text>
-                      </Tooltip>
-                    </Td>
-                    <Td>
-                      <Tooltip label={release.commitHash} isDisabled={!release.commitHash}>
-                        <Box as="span" display="inline-block">
-                          <CommitHash
-                            hash={release.commitHash}
-                            repositoryUrl={release.repositoryUrl}
+                  <Fragment key={release.id}>
+                    <Tr
+                      transition="background .15s"
+                      _hover={{ bg: 'rgba(255,255,255,.02)' }}
+                      _last={{ td: { borderBottom: 'none' } }}>
+                      <Td>
+                        <Tooltip label={release.path}>
+                          <Button
+                            variant="link"
+                            color="white"
                             fontFamily="mono"
                             fontSize="xs"
-                            color="muted"
-                          />
-                        </Box>
-                      </Tooltip>
-                    </Td>
-                    <Td>
-                      <Tooltip label={release.commitMessage} isDisabled={!release.commitMessage}>
-                        <Text isTruncated maxW="16rem">
-                          {release.commitMessage || '—'}
-                        </Text>
-                      </Tooltip>
-                    </Td>
-                    <Td whiteSpace="nowrap" color="muted">
-                      {formatUtcTimestamp(release.timestamp, 'MMM D, HH:mm')}
-                    </Td>
-                    <Td isNumeric fontFamily="mono" fontSize="xs" color="muted" whiteSpace="nowrap">
-                      {formatFileSize(release.size)}
-                    </Td>
-                    <Td textAlign="right">
-                      {release.status === 'active' ? (
-                        <Flex
-                          display="inline-flex"
-                          align="center"
-                          gap={2}
-                          px={2.5}
-                          h="26px"
-                          borderRadius="full"
-                          bg="verified.bg"
-                          border="1px solid"
-                          borderColor="verified.border"
-                          color="verified.text"
-                          fontSize="xs"
-                          fontWeight={500}>
-                          <Box boxSize="6px" borderRadius="full" bg="verified.dot" />
-                          Live
-                        </Flex>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          h="26px"
-                          px={2.5}
-                          color="warning.text"
-                          borderColor="rgba(224,180,0,.45)"
-                          leftIcon={<FiRotateCcw />}
-                          _hover={{ bg: 'warning.hover', borderColor: 'warning.border' }}
-                          _active={{ bg: 'warning.hover' }}
-                          onClick={() => openRollback(release)}>
-                          Roll back
-                        </Button>
-                      )}
-                    </Td>
-                  </Tr>
+                            fontWeight="normal"
+                            maxW="12rem"
+                            rightIcon={<FiChevronDown />}
+                            iconSpacing={2}
+                            aria-expanded={expandedReleaseId === release.id}
+                            aria-controls={`release-metrics-${release.id}`}
+                            onClick={() => toggleRelease(release.id)}
+                            sx={{
+                              svg: {
+                                transform:
+                                  expandedReleaseId === release.id ? 'rotate(180deg)' : 'none',
+                              },
+                            }}>
+                            <Text as="span" isTruncated>
+                              {release.path.split('/').pop()}
+                            </Text>
+                          </Button>
+                        </Tooltip>
+                      </Td>
+                      <Td>
+                        <Tooltip label={release.commitHash} isDisabled={!release.commitHash}>
+                          <Box as="span" display="inline-block">
+                            <CommitHash
+                              hash={release.commitHash}
+                              repositoryUrl={release.repositoryUrl}
+                              fontFamily="mono"
+                              fontSize="xs"
+                              color="muted"
+                            />
+                          </Box>
+                        </Tooltip>
+                      </Td>
+                      <Td>
+                        <Tooltip label={release.commitMessage} isDisabled={!release.commitMessage}>
+                          <Text isTruncated maxW="16rem">
+                            {release.commitMessage || '—'}
+                          </Text>
+                        </Tooltip>
+                      </Td>
+                      <Td whiteSpace="nowrap" color="muted">
+                        {formatWatTimestamp(release.timestamp, 'MMM D, HH:mm')}
+                      </Td>
+                      <Td
+                        isNumeric
+                        fontFamily="mono"
+                        fontSize="xs"
+                        color="muted"
+                        whiteSpace="nowrap">
+                        {formatFileSize(release.size)}
+                      </Td>
+                      <Td textAlign="right">
+                        {release.status === 'active' ? (
+                          <Flex
+                            display="inline-flex"
+                            align="center"
+                            gap={2}
+                            px={2.5}
+                            h="26px"
+                            borderRadius="full"
+                            bg="verified.bg"
+                            border="1px solid"
+                            borderColor="verified.border"
+                            color="verified.text"
+                            fontSize="xs"
+                            fontWeight={500}>
+                            <Box boxSize="6px" borderRadius="full" bg="verified.dot" />
+                            Live
+                          </Flex>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            h="26px"
+                            px={2.5}
+                            color="warning.text"
+                            borderColor="rgba(224,180,0,.45)"
+                            leftIcon={<FiRotateCcw />}
+                            _hover={{ bg: 'warning.hover', borderColor: 'warning.border' }}
+                            _active={{ bg: 'warning.hover' }}
+                            onClick={() => openRollback(release)}>
+                            Roll back
+                          </Button>
+                        )}
+                      </Td>
+                    </Tr>
+                    {expandedReleaseId === release.id && (
+                      <Tr>
+                        <Td colSpan={6} bg="field" px={{ base: 4, md: 6 }} py={5}>
+                          <Box id={`release-metrics-${release.id}`}>
+                            <Text color="muted" fontSize="xs" mb={4}>
+                              Update ID:{' '}
+                              <Text as="span" color="white" fontFamily="mono" wordBreak="break-all">
+                                {release.updateId || 'Unavailable'}
+                              </Text>
+                            </Text>
+                            {releaseMetrics[release.id]?.loading && (
+                              <Text color="muted" fontSize="sm">
+                                Loading metrics…
+                              </Text>
+                            )}
+                            {releaseMetrics[release.id]?.error && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="gray"
+                                onClick={() => toggleRelease(release.id, true)}>
+                                Couldn’t load metrics. Try again.
+                              </Button>
+                            )}
+                            {releaseMetrics[release.id]?.rows && (
+                              <Box overflowX="auto">
+                                <Table size="sm" variant="simple">
+                                  <Thead>
+                                    <Tr>
+                                      <Th>Platform</Th>
+                                      <Th isNumeric>Unique installations offered</Th>
+                                      <Th isNumeric>Manifest requests</Th>
+                                      <Th isNumeric>Download attempts</Th>
+                                      <Th isNumeric>Asset requests</Th>
+                                      <Th isNumeric>Bytes transferred</Th>
+                                    </Tr>
+                                  </Thead>
+                                  <Tbody>
+                                    {releaseMetrics[release.id].rows?.map((row) => (
+                                      <Tr
+                                        key={row.platform}
+                                        _last={{ td: { borderBottom: 'none' } }}>
+                                        <Td>{row.platform === 'ios' ? 'iOS' : 'Android'}</Td>
+                                        <Td isNumeric fontFamily="mono">
+                                          {row.uniqueInstallations.toLocaleString()}
+                                        </Td>
+                                        <Td isNumeric fontFamily="mono">
+                                          {row.manifestRequests.toLocaleString()}
+                                        </Td>
+                                        <Td isNumeric fontFamily="mono">
+                                          {row.downloadAttempts.toLocaleString()}
+                                        </Td>
+                                        <Td isNumeric fontFamily="mono">
+                                          {row.assetRequests.toLocaleString()}
+                                        </Td>
+                                        <Td isNumeric fontFamily="mono">
+                                          {formatFileSize(row.bytesTransferred)}
+                                        </Td>
+                                      </Tr>
+                                    ))}
+                                  </Tbody>
+                                </Table>
+                              </Box>
+                            )}
+                          </Box>
+                        </Td>
+                      </Tr>
+                    )}
+                  </Fragment>
                 ))}
               </Tbody>
             </Table>
@@ -409,7 +538,7 @@ export default function RuntimeReleasesPage() {
                           Update ID: {release.updateId || 'unavailable'}
                         </Text>
                         <Text fontSize="xs" color="muted" mt={1}>
-                          Published: {formatUtcTimestamp(release.timestamp)}
+                          Published: {formatWatTimestamp(release.timestamp)}
                         </Text>
                       </Box>
                     ))}

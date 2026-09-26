@@ -11,6 +11,7 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
 } from '@chakra-ui/react';
 import { keyframes } from '@emotion/react';
@@ -25,21 +26,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PageHeader from '../components/PageHeader';
 import ProtectedRoute from '../components/ProtectedRoute';
 import { formatFileSize, Release } from '../components/releases';
-import { formatUtcTimestamp } from '../components/time';
-
-interface ReleasePlatformMetrics {
-  releaseId: string;
-  runtimeVersion: string;
-  updateId: string | null;
-  status: string;
-  publishedAt: string;
-  platform: string;
-  uniqueInstallations: number;
-  manifestRequests: number;
-  downloadAttempts: number;
-  assetRequests: number;
-  bytesTransferred: number;
-}
+import { formatWatTimestamp } from '../components/time';
 
 const pulse = keyframes`
   0% { box-shadow: 0 0 0 0 rgba(31,157,85,.55); }
@@ -49,12 +36,15 @@ const pulse = keyframes`
 
 export default function Dashboard() {
   const [uniqueInstallations, setUniqueInstallations] = useState(0);
-  const [releaseMetrics, setReleaseMetrics] = useState<ReleasePlatformMetrics[]>([]);
+  const [iosInstallations, setIosInstallations] = useState(0);
+  const [androidInstallations, setAndroidInstallations] = useState(0);
   const [totalReleases, setTotalReleases] = useState(0);
   const [monthlyInstallations, setMonthlyInstallations] = useState(0);
   const [activeReleases, setActiveReleases] = useState<Release[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
   const fetchData = async () => {
+    setIsLoading(true);
     try {
       const [response, monthlyResponse, releasesResponse] = await Promise.all([
         fetch('/api/tracking/summary'),
@@ -67,7 +57,7 @@ export default function Dashboard() {
       const data = await response.json();
       const monthlyData = await monthlyResponse.json();
       const releasesData = await releasesResponse.json();
-      const currentMonth = moment.utc().format('YYYY-MM');
+      const currentMonth = moment().utcOffset(60).format('YYYY-MM');
       setMonthlyInstallations(
         monthlyData.installations?.find(
           (item: { month: string; count: number }) => item.month === currentMonth
@@ -76,11 +66,13 @@ export default function Dashboard() {
 
       const releases: Release[] = releasesData.releases ?? [];
       setActiveReleases(releases.filter((release) => release.status === 'active'));
-      setReleaseMetrics(data.releases);
       setUniqueInstallations(data.uniqueInstallations);
+      setIosInstallations(data.iosInstallations);
+      setAndroidInstallations(data.androidInstallations);
       setTotalReleases(releases.length);
-    } catch (error) {
-      console.error('Failed to fetch tracking data:', error);
+      setHasError(false);
+    } catch {
+      setHasError(true);
     } finally {
       setIsLoading(false);
     }
@@ -90,33 +82,29 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
-  const sumMetric = (
-    key: 'manifestRequests' | 'downloadAttempts' | 'assetRequests' | 'bytesTransferred'
-  ) => releaseMetrics.reduce((total, release) => total + release[key], 0);
   const stats = [
-    { label: 'Releases published', value: totalReleases },
-    { label: 'Manifest requests', value: sumMetric('manifestRequests') },
-    { label: 'Unique installations offered', value: uniqueInstallations },
-    { label: 'Download attempts', value: sumMetric('downloadAttempts') },
-    { label: 'Asset requests', value: sumMetric('assetRequests') },
-    { label: 'Bytes transferred', value: formatFileSize(sumMetric('bytesTransferred')) },
-    { label: 'Unique installations this month', value: monthlyInstallations },
-    { label: 'Update downloaded', value: 'Needs app acknowledgement' },
-    { label: 'Update launched', value: 'Needs app acknowledgement' },
+    { label: 'Releases published', value: totalReleases, detail: '' },
+    {
+      label: 'Unique installs reached',
+      value: uniqueInstallations,
+      detail: 'App installations offered an OTA across all releases.',
+    },
+    {
+      label: 'iOS installs reached',
+      value: iosInstallations,
+      detail: 'Unique iOS installations offered an OTA.',
+    },
+    {
+      label: 'Android installs reached',
+      value: androidInstallations,
+      detail: 'Unique Android installations offered an OTA.',
+    },
+    {
+      label: 'Installs reached this month',
+      value: monthlyInstallations,
+      detail: 'Unique installations offered an OTA this month.',
+    },
   ];
-  const metricsByRuntime = Array.from(new Set(releaseMetrics.map((row) => row.runtimeVersion))).map(
-    (version) => ({
-      version,
-      releases: Array.from(
-        new Set(
-          releaseMetrics.filter((row) => row.runtimeVersion === version).map((row) => row.releaseId)
-        )
-      ).map((id) => ({
-        id,
-        rows: releaseMetrics.filter((row) => row.releaseId === id),
-      })),
-    })
-  );
   const latestRelease = activeReleases.reduce<Release | null>(
     (latest, release) =>
       !latest || new Date(release.timestamp) > new Date(latest.timestamp) ? release : latest,
@@ -130,6 +118,13 @@ export default function Dashboard() {
 
         {isLoading ? (
           <LoadingSpinner py={24} />
+        ) : hasError ? (
+          <Box bg="panel" border="1px solid" borderColor="line" borderRadius="14px" p={8}>
+            <Text>Couldn’t load dashboard data. Check the database connection and try again.</Text>
+            <Button mt={4} colorScheme="gray" onClick={fetchData}>
+              Retry
+            </Button>
+          </Box>
         ) : (
           <>
             <Box
@@ -160,11 +155,11 @@ export default function Dashboard() {
                         animation={`${pulse} 2.4s ease-out infinite`}
                       />
                       <Text fontSize="sm" fontWeight={500} color="verified.text">
-                        Most recently published active release
+                        Latest live OTA
                       </Text>
                     </Flex>
                     <Text fontSize="sm" color="muted">
-                      Published {formatUtcTimestamp(latestRelease.timestamp)}
+                      Shipped {moment(latestRelease.timestamp).fromNow()}
                     </Text>
                   </Flex>
 
@@ -196,7 +191,7 @@ export default function Dashboard() {
                         repositoryUrl={latestRelease.repositoryUrl}
                       />
                       <Text>{formatFileSize(latestRelease.size)}</Text>
-                      <Text>{formatUtcTimestamp(latestRelease.timestamp, 'MMM D, HH:mm')}</Text>
+                      <Text>{formatWatTimestamp(latestRelease.timestamp, 'MMM D, HH:mm')}</Text>
                     </Flex>
                     <Button
                       as={NextLink}
@@ -217,47 +212,56 @@ export default function Dashboard() {
               )}
             </Box>
 
-            {activeReleases.length > 0 && (
+            {activeReleases.length > 1 && (
               <Box
                 mt={4}
                 bg="panel"
                 border="1px solid"
                 borderColor="line"
                 borderRadius="14px"
-                p={{ base: 5, md: 6 }}>
-                <Heading as="h2" fontSize="md" mb={4}>
-                  Active by runtime
+                overflowX="auto"
+                p={{ base: 4, md: 6 }}>
+                <Heading as="h2" fontSize="md" mb={2}>
+                  Live OTA for each runtime
                 </Heading>
-                {activeReleases.map((release) => (
-                  <Flex
-                    key={release.id}
-                    justify="space-between"
-                    gap={4}
-                    wrap="wrap"
-                    py={3}
-                    borderTop="1px solid"
-                    borderColor="line">
-                    <Link
-                      as={NextLink}
-                      href={`/releases/${encodeURIComponent(release.runtimeVersion)}`}
-                      fontFamily="mono"
-                      fontSize="sm">
-                      {release.runtimeVersion}
-                    </Link>
-                    <Text fontFamily="mono" fontSize="xs" color="muted">
-                      {release.commitHash || 'Unknown commit'}
-                    </Text>
-                    <Text fontFamily="mono" fontSize="xs" color="muted">
-                      {release.updateId || 'Update ID pending'}
-                    </Text>
-                  </Flex>
-                ))}
+                <Table size="sm" variant="simple">
+                  <Thead>
+                    <Tr>
+                      <Th>Runtime</Th>
+                      <Th>Live commit</Th>
+                      <Th>Update ID</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {activeReleases.map((release) => (
+                      <Tr key={release.id} _last={{ td: { borderBottom: 'none' } }}>
+                        <Td>
+                          <Link
+                            as={NextLink}
+                            href={`/releases/${encodeURIComponent(release.runtimeVersion)}`}
+                            fontFamily="mono">
+                            {release.runtimeVersion}
+                          </Link>
+                        </Td>
+                        <Td fontFamily="mono">
+                          <CommitHash
+                            hash={release.commitHash}
+                            repositoryUrl={release.repositoryUrl}
+                          />
+                        </Td>
+                        <Td fontFamily="mono" fontSize="xs" color="muted">
+                          {release.updateId || 'Pending'}
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
               </Box>
             )}
 
             <Grid
               mt={4}
-              templateColumns={{ base: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' }}
+              templateColumns={{ base: '1fr', lg: 'repeat(5, 1fr)' }}
               gap="1px"
               bg="line"
               border="1px solid"
@@ -266,117 +270,22 @@ export default function Dashboard() {
               overflow="hidden">
               {stats.map((stat) => (
                 <Box key={stat.label} bg="panel" px={5} py={5}>
-                  <Text fontSize="xs" color="muted">
-                    {stat.label}
-                  </Text>
+                  <Tooltip label={stat.detail} isDisabled={!stat.detail}>
+                    <Text fontSize="xs" color="muted" cursor={stat.detail ? 'help' : 'default'}>
+                      {stat.label}
+                    </Text>
+                  </Tooltip>
                   <Text
                     mt={2}
                     fontFamily="mono"
-                    fontSize={typeof stat.value === 'number' ? '2xl' : 'sm'}
+                    fontSize="2xl"
                     fontWeight={500}
                     sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {typeof stat.value === 'number' ? stat.value.toLocaleString() : stat.value}
+                    {stat.value.toLocaleString()}
                   </Text>
                 </Box>
               ))}
             </Grid>
-            <Text color="muted" fontSize="xs" mt={3}>
-              Download attempts start with the first asset request per installation and release.
-              Bytes transferred count asset responses sent by this server.
-            </Text>
-
-            <Heading as="h2" fontSize="lg" mt={10} mb={4}>
-              Metrics by runtime and release
-            </Heading>
-            {metricsByRuntime.map((runtime) => (
-              <Box
-                key={runtime.version}
-                bg="panel"
-                border="1px solid"
-                borderColor="line"
-                borderRadius="14px"
-                mb={4}
-                overflow="hidden">
-                <Flex
-                  align="center"
-                  justify="space-between"
-                  p={5}
-                  borderBottom="1px solid"
-                  borderColor="line">
-                  <Heading as="h3" fontSize="md">
-                    Runtime{' '}
-                    <Text as="span" fontFamily="mono">
-                      {runtime.version}
-                    </Text>
-                  </Heading>
-                  <Link
-                    as={NextLink}
-                    href={`/releases/${encodeURIComponent(runtime.version)}`}
-                    color="muted"
-                    fontSize="sm">
-                    View OTAs
-                  </Link>
-                </Flex>
-                {runtime.releases.map((release) => (
-                  <Box
-                    key={release.id}
-                    p={5}
-                    borderBottom="1px solid"
-                    borderColor="line"
-                    _last={{ borderBottom: 'none' }}>
-                    <Flex align="center" gap={4} wrap="wrap" mb={3}>
-                      <Text fontFamily="mono" fontSize="xs" wordBreak="break-all">
-                        {release.rows[0].updateId || release.id}
-                      </Text>
-                      <Text
-                        color={release.rows[0].status === 'active' ? 'verified.text' : 'muted'}
-                        fontSize="xs">
-                        {release.rows[0].status === 'active' ? 'Live' : 'Inactive'}
-                      </Text>
-                      <Text color="muted" fontSize="xs">
-                        {formatUtcTimestamp(release.rows[0].publishedAt)}
-                      </Text>
-                    </Flex>
-                    <Box overflowX="auto">
-                      <Table size="sm" variant="simple">
-                        <Thead>
-                          <Tr>
-                            <Th>Platform</Th>
-                            <Th isNumeric>Unique installations offered</Th>
-                            <Th isNumeric>Manifest requests</Th>
-                            <Th isNumeric>Download attempts</Th>
-                            <Th isNumeric>Asset requests</Th>
-                            <Th isNumeric>Bytes transferred</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {release.rows.map((row) => (
-                            <Tr key={row.platform} _last={{ td: { borderBottom: 'none' } }}>
-                              <Td>{row.platform === 'ios' ? 'iOS' : 'Android'}</Td>
-                              <Td isNumeric fontFamily="mono">
-                                {row.uniqueInstallations.toLocaleString()}
-                              </Td>
-                              <Td isNumeric fontFamily="mono">
-                                {row.manifestRequests.toLocaleString()}
-                              </Td>
-                              <Td isNumeric fontFamily="mono">
-                                {row.downloadAttempts.toLocaleString()}
-                              </Td>
-                              <Td isNumeric fontFamily="mono">
-                                {row.assetRequests.toLocaleString()}
-                              </Td>
-                              <Td isNumeric fontFamily="mono">
-                                {formatFileSize(row.bytesTransferred)}
-                              </Td>
-                            </Tr>
-                          ))}
-                        </Tbody>
-                      </Table>
-                    </Box>
-                  </Box>
-                ))}
-              </Box>
-            ))}
           </>
         )}
       </Layout>

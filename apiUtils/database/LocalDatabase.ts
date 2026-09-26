@@ -273,11 +273,11 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getMonthlyInstallationMetrics(): Promise<MonthlyInstallationMetrics[]> {
     const { rows } = await this.pool.query(`
-      SELECT to_char(date_trunc('month', download_timestamp AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
+      SELECT to_char(date_trunc('month', download_timestamp AT TIME ZONE 'Africa/Lagos'), 'YYYY-MM') AS month,
              COUNT(DISTINCT installation_id) AS count
       FROM ${Tables.RELEASES_TRACKING}
       WHERE installation_id IS NOT NULL AND offered_release = TRUE
-      GROUP BY date_trunc('month', download_timestamp AT TIME ZONE 'UTC')
+      GROUP BY date_trunc('month', download_timestamp AT TIME ZONE 'Africa/Lagos')
       ORDER BY month DESC
     `);
     return rows.map((row) => ({ month: row.month, count: Number(row.count) }));
@@ -293,8 +293,8 @@ export class PostgresDatabase implements DatabaseInterface {
          COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'ios') AS "iosInstalls",
          COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'android') AS "androidInstalls",
          COUNT(DISTINCT t.installation_id) FILTER (
-           WHERE date_trunc('month', t.download_timestamp AT TIME ZONE 'UTC') =
-                 date_trunc('month', now() AT TIME ZONE 'UTC')
+           WHERE date_trunc('month', t.download_timestamp AT TIME ZONE 'Africa/Lagos') =
+                 date_trunc('month', now() AT TIME ZONE 'Africa/Lagos')
          ) AS "uniqueInstallsThisMonth"
        FROM ${Tables.RELEASES_TRACKING} t
        JOIN ${Tables.RELEASES} r ON r.id = t.release_id
@@ -308,7 +308,7 @@ export class PostgresDatabase implements DatabaseInterface {
     };
   }
 
-  async getReleaseMetricsHierarchy(): Promise<
+  async getReleaseMetricsHierarchy(releaseId?: string): Promise<
     {
       releaseId: string;
       runtimeVersion: string;
@@ -323,7 +323,8 @@ export class PostgresDatabase implements DatabaseInterface {
       bytesTransferred: number;
     }[]
   > {
-    const { rows } = await this.pool.query(`
+    const { rows } = await this.pool.query(
+      `
       SELECT r.id AS "releaseId", r.runtime_version AS "runtimeVersion",
              r.update_id AS "updateId", r.status, r.timestamp AS "publishedAt",
              platforms.platform,
@@ -343,8 +344,11 @@ export class PostgresDatabase implements DatabaseInterface {
       LEFT JOIN release_request_metrics metrics
         ON metrics.release_id = r.id AND metrics.platform = platforms.platform
       WHERE r.status IN ('active', 'inactive')
+        ${releaseId ? 'AND r.id = $1' : ''}
       ORDER BY r.runtime_version DESC, r.timestamp DESC, platforms.platform
-    `);
+    `,
+      releaseId ? [releaseId] : []
+    );
     return rows.map((row) => ({
       ...row,
       uniqueInstallations: Number(row.uniqueInstallations),
@@ -355,13 +359,23 @@ export class PostgresDatabase implements DatabaseInterface {
     }));
   }
 
-  async getGlobalUniqueInstallations(): Promise<number> {
+  async getGlobalInstallationSummary(): Promise<{
+    uniqueInstallations: number;
+    iosInstallations: number;
+    androidInstallations: number;
+  }> {
     const { rows } = await this.pool.query(
-      `SELECT COUNT(DISTINCT installation_id) AS count
+      `SELECT COUNT(DISTINCT installation_id) AS "uniqueInstallations",
+              COUNT(DISTINCT installation_id) FILTER (WHERE platform = 'ios') AS "iosInstallations",
+              COUNT(DISTINCT installation_id) FILTER (WHERE platform = 'android') AS "androidInstallations"
        FROM ${Tables.RELEASES_TRACKING}
        WHERE installation_id IS NOT NULL AND offered_release = TRUE`
     );
-    return Number(rows[0].count);
+    return {
+      uniqueInstallations: Number(rows[0].uniqueInstallations),
+      iosInstallations: Number(rows[0].iosInstallations),
+      androidInstallations: Number(rows[0].androidInstallations),
+    };
   }
 
   async listRuntimeSummaries(

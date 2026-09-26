@@ -24,7 +24,7 @@ import Layout from '../../components/Layout';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
-import { formatUtcTimestamp } from '../../components/time';
+import { formatWatTimestamp } from '../../components/time';
 
 interface RuntimeSummary {
   version: string;
@@ -174,7 +174,7 @@ export default function ReleasesPage() {
                         )}
                       </Td>
                       <Td whiteSpace="nowrap" color="muted">
-                        {formatUtcTimestamp(runtime.latestPublishedAt)}
+                        {formatWatTimestamp(runtime.latestPublishedAt)}
                       </Td>
                       <Td>
                         <Flex

@@ -10,11 +10,8 @@ export default async function trackingSummaryHandler(req: NextApiRequest, res: N
 
   try {
     const database = DatabaseFactory.getDatabase();
-    const [releases, uniqueInstallations] = await Promise.all([
-      database.getReleaseMetricsHierarchy(),
-      database.getGlobalUniqueInstallations(),
-    ]);
-    res.status(200).json({ releases, uniqueInstallations });
+    const summary = await database.getGlobalInstallationSummary();
+    res.status(200).json(summary);
   } catch (error) {
     console.error('Failed to fetch tracking summary:', error);
     res.status(500).json({ error: 'Failed to fetch tracking summary' });

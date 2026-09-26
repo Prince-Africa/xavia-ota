@@ -30,7 +30,7 @@ describe('runtime installation metrics', () => {
     const sql = query.mock.calls[0][0];
     expect(sql).toContain('JOIN releases r ON r.id = t.release_id');
     expect(sql).toContain('r.runtime_version = $1');
-    expect(sql).toContain("date_trunc('month', t.download_timestamp AT TIME ZONE 'UTC')");
+    expect(sql).toContain("date_trunc('month', t.download_timestamp AT TIME ZONE 'Africa/Lagos')");
     expect(sql).toContain('t.offered_release = TRUE');
   });
 

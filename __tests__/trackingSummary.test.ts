@@ -45,12 +45,13 @@ describe('tracking summary', () => {
     expect(query.mock.calls[0][0]).toContain('r.runtime_version AS "runtimeVersion"');
   });
 
-  it('returns global unique installations and the runtime hierarchy', async () => {
+  it('returns distinct installation totals by platform', async () => {
     const database = {
-      getReleaseMetricsHierarchy: jest
-        .fn()
-        .mockResolvedValue([{ releaseId: 'a', platform: 'ios' }]),
-      getGlobalUniqueInstallations: jest.fn().mockResolvedValue(3),
+      getGlobalInstallationSummary: jest.fn().mockResolvedValue({
+        uniqueInstallations: 3,
+        iosInstallations: 2,
+        androidInstallations: 1,
+      }),
     };
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
     const { req, res } = createMocks({ method: 'GET' });
@@ -59,9 +60,27 @@ describe('tracking summary', () => {
 
     expect(res._getStatusCode()).toBe(200);
     expect(JSON.parse(res._getData())).toEqual({
-      releases: [{ releaseId: 'a', platform: 'ios' }],
       uniqueInstallations: 3,
+      iosInstallations: 2,
+      androidInstallations: 1,
     });
+  });
+
+  it('counts each offered installation once per platform across releases', async () => {
+    const query = jest.fn().mockResolvedValue({
+      rows: [{ uniqueInstallations: '3', iosInstallations: '2', androidInstallations: '1' }],
+    });
+    (Pool as unknown as jest.Mock).mockImplementation(() => ({ query }));
+
+    expect(await new PostgresDatabase().getGlobalInstallationSummary()).toEqual({
+      uniqueInstallations: 3,
+      iosInstallations: 2,
+      androidInstallations: 1,
+    });
+    expect(query.mock.calls[0][0]).toContain('COUNT(DISTINCT installation_id)');
+    expect(query.mock.calls[0][0]).toContain("platform = 'ios'");
+    expect(query.mock.calls[0][0]).toContain("platform = 'android'");
+    expect(query.mock.calls[0][0]).toContain('offered_release = TRUE');
   });
 
   it('separates manifest offers from asset transfer counters', async () => {
