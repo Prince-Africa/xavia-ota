@@ -90,10 +90,6 @@ export default function ReleasesPage() {
             />
           }
         />
-        <Text color="muted" mb={7}>
-          Each runtime has its own OTA history and live release. A runtime appears after its first
-          OTA is published.
-        </Text>
         {loading && <LoadingSpinner py={24} />}
         {error && (
           <Text color="primary.300" fontSize="sm">
