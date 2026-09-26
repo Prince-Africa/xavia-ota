@@ -57,7 +57,10 @@ describe('Assets API', () => {
       .fn()
       .mockResolvedValue({ id: 'release-id', path: 'path/to/update.zip', status: 'inactive' });
     const recordAssetRequest = jest.fn();
-    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({ getReleaseByUpdateId, recordAssetRequest });
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({
+      getReleaseByUpdateId,
+      recordAssetRequest,
+    });
     (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue(mockMetadata);
     (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({});
     (ZipHelper.getFileFromZip as jest.Mock).mockResolvedValue(Buffer.from('test'));
@@ -78,9 +81,47 @@ describe('Assets API', () => {
     expect(res._getData()).toMatchSnapshot();
     expect(getReleaseByUpdateId).toHaveBeenCalledWith('1.0.0', 'exact-update-id');
     expect(recordAssetRequest).toHaveBeenCalledWith(
-      'release-id', 'ios', 4, '576634c0-6482-4c50-8c60-169f7ac9b7b8'
+      'release-id',
+      'ios',
+      4,
+      '576634c0-6482-4c50-8c60-169f7ac9b7b8'
     );
     expect(ZipHelper.getZipFromStorage).toHaveBeenCalledWith('path/to/update');
+  });
+
+  it('serves the parent release zip for a rollback publication ID', async () => {
+    const getReleaseByUpdateId = jest.fn().mockResolvedValue({
+      id: 'parent-release-id',
+      path: 'updates/1.0.0/original.zip',
+      updateId: 'original-content-id',
+      status: 'active',
+    });
+    const recordAssetRequest = jest.fn();
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({
+      getReleaseByUpdateId,
+      recordAssetRequest,
+    });
+    (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue({
+      metadataJson: { fileMetadata: { ios: { assets: [], bundle: 'bundle.js' } } },
+    });
+    (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({});
+    (ZipHelper.getFileFromZip as jest.Mock).mockResolvedValue(Buffer.from('bundle'));
+
+    const { req, res } = createMocks({
+      method: 'GET',
+      query: {
+        asset: 'bundle.js',
+        platform: 'ios',
+        runtimeVersion: '1.0.0',
+        updateId: 'rollback-publication-id',
+      },
+    });
+
+    await assetsEndpoint(req, res);
+    expect(res._getStatusCode()).toBe(200);
+    expect(getReleaseByUpdateId).toHaveBeenCalledWith('1.0.0', 'rollback-publication-id');
+    expect(ZipHelper.getZipFromStorage).toHaveBeenCalledWith('updates/1.0.0/original');
+    expect(recordAssetRequest).toHaveBeenCalledWith('parent-release-id', 'ios', 6, null);
   });
 
   it('rejects an update ID without a matching release', async () => {

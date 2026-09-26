@@ -20,6 +20,7 @@ const current = {
   runtimeVersion: '1.0.0',
   status: 'active',
   updateId: 'current-update',
+  servedUpdateId: 'current-served-update',
   commitHash: 'current-commit',
   timestamp: '2026-09-25T12:00:00Z',
 };
@@ -84,7 +85,7 @@ describe('Rollback API', () => {
       current: {
         id: 'current-id',
         commitHash: 'current-commit',
-        updateId: 'current-update',
+        updateId: 'current-served-update',
         timestamp: current.timestamp,
       },
       target: { commitHash: 'old-commit', updateId: 'old-update', timestamp: target.timestamp },
@@ -96,11 +97,14 @@ describe('Rollback API', () => {
     expect(database.rollbackToRelease).not.toHaveBeenCalled();
   });
 
-  it('reactivates the selected release without copying or inserting', async () => {
+  it('serves the selected release under a new update ID without copying or inserting', async () => {
     const database = {
       getReleaseByPath: jest.fn().mockResolvedValue(target),
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(current),
-      rollbackToRelease: jest.fn().mockResolvedValue('activated'),
+      rollbackToRelease: jest
+        .fn()
+        .mockResolvedValue({ outcome: 'activated', updateId: 'rollback-update' }),
+      createRelease: jest.fn(),
     };
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
     const { req, res } = createMocks({
@@ -109,9 +113,46 @@ describe('Rollback API', () => {
     });
     await rollbackHandler(req, res);
     expect(res._getStatusCode()).toBe(200);
-    expect(JSON.parse(res._getData())).toEqual({ success: true, path, updateId: 'old-update' });
+    expect(JSON.parse(res._getData())).toEqual({
+      success: true,
+      path,
+      updateId: 'rollback-update',
+    });
     expect(database.rollbackToRelease).toHaveBeenCalledWith('target-id', 'current-id');
+    expect(database.createRelease).not.toHaveBeenCalled();
     expect(StorageFactory.getStorage().copyFile).toBeUndefined();
+  });
+
+  it('refuses a target that is already Live', async () => {
+    const database = {
+      getReleaseByPath: jest.fn().mockResolvedValue({ ...target, status: 'active' }),
+      getLatestReleaseRecordForRuntimeVersion: jest.fn(),
+      rollbackToRelease: jest.fn(),
+    };
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
+    const { req, res } = createMocks({
+      method: 'POST',
+      body: { path, runtimeVersion: '1.0.0', expectedActiveReleaseId: 'current-id' },
+    });
+    await rollbackHandler(req, res);
+    expect(res._getStatusCode()).toBe(409);
+    expect(database.rollbackToRelease).not.toHaveBeenCalled();
+  });
+
+  it('reports a concurrent publish instead of overwriting it', async () => {
+    const database = {
+      getReleaseByPath: jest.fn().mockResolvedValue(target),
+      getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(current),
+      rollbackToRelease: jest.fn().mockResolvedValue({ outcome: 'active_changed' }),
+    };
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
+    const { req, res } = createMocks({
+      method: 'POST',
+      body: { path, runtimeVersion: '1.0.0', expectedActiveReleaseId: 'stale-id' },
+    });
+    await rollbackHandler(req, res);
+    expect(res._getStatusCode()).toBe(409);
+    expect(JSON.parse(res._getData()).error).toMatch(/Active release changed/);
   });
 
   it('blocks a target with the same update ID as the active release', async () => {
@@ -154,7 +195,9 @@ describe('Rollback API', () => {
       getReleaseByPath: jest.fn().mockResolvedValue({ ...target, updateId: null }),
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(current),
       setReleaseUpdateId: jest.fn(),
-      rollbackToRelease: jest.fn().mockResolvedValue('activated'),
+      rollbackToRelease: jest
+        .fn()
+        .mockResolvedValue({ outcome: 'activated', updateId: 'rollback-update' }),
     };
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(database);
     (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({});

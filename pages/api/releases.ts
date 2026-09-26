@@ -35,6 +35,7 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
         repositoryUrl: release.repositoryUrl ?? null,
         updateId: release.updateId,
         status: release.status,
+        publications: release.publications ?? [],
         archiveAvailable: filesByPath.has(release.path),
       }));
 

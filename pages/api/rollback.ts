@@ -84,7 +84,7 @@ export default async function rollbackHandler(req: NextApiRequest, res: NextApiR
         current: {
           id: current.id,
           commitHash: current.commitHash,
-          updateId: currentUpdateId,
+          updateId: current.servedUpdateId ?? currentUpdateId,
           timestamp: current.timestamp,
         },
         target: {
@@ -117,17 +117,18 @@ export default async function rollbackHandler(req: NextApiRequest, res: NextApiR
     }
     if (!current.updateId) await database.setReleaseUpdateId(current.id, currentUpdateId);
     if (!target.updateId) await database.setReleaseUpdateId(target.id, targetUpdateId);
-    const outcome = await database.rollbackToRelease(target.id, expectedActiveReleaseId as string);
-    if (outcome !== 'activated') {
-      res.status(outcome === 'not_found' ? 404 : 409).json({
+    // No new release row and no archive copy: the target gets a new publication (update ID) instead.
+    const result = await database.rollbackToRelease(target.id, expectedActiveReleaseId as string);
+    if (result.outcome !== 'activated') {
+      res.status(result.outcome === 'not_found' ? 404 : 409).json({
         error:
-          outcome === 'active_changed'
+          result.outcome === 'active_changed'
             ? 'Active release changed. Review the rollback again.'
-            : outcome,
+            : result.outcome,
       });
       return;
     }
-    res.status(200).json({ success: true, path: target.path, updateId: targetUpdateId });
+    res.status(200).json({ success: true, path: target.path, updateId: result.updateId });
   } catch (error) {
     console.error('Rollback error:', error);
     res.status(500).json({ error: 'Rollback failed' });

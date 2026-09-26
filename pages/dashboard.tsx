@@ -25,7 +25,7 @@ import Layout from '../components/Layout';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PageHeader from '../components/PageHeader';
 import ProtectedRoute from '../components/ProtectedRoute';
-import { formatFileSize, Release } from '../components/releases';
+import { formatFileSize, Release, servedUpdateId } from '../components/releases';
 import { formatWatTimestamp } from '../components/time';
 
 const pulse = keyframes`
@@ -250,7 +250,7 @@ export default function Dashboard() {
                           />
                         </Td>
                         <Td fontFamily="mono" fontSize="xs" color="muted">
-                          {release.updateId || 'Pending'}
+                          {servedUpdateId(release) || 'Pending'}
                         </Td>
                       </Tr>
                     ))}

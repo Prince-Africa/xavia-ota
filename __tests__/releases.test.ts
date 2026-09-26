@@ -124,9 +124,84 @@ describe('Releases API', () => {
 
     expect(res._getStatusCode()).toBe(200);
     expect(JSON.parse(res._getData()).releases).toEqual([
-      expect.objectContaining({ runtimeVersion: '1.1.2', status: 'active', archiveAvailable: false }),
-      expect.objectContaining({ runtimeVersion: '1.2.0', status: 'active', archiveAvailable: false }),
+      expect.objectContaining({
+        runtimeVersion: '1.1.2',
+        status: 'active',
+        archiveAvailable: false,
+      }),
+      expect.objectContaining({
+        runtimeVersion: '1.2.0',
+        status: 'active',
+        archiveAvailable: false,
+      }),
     ]);
+  });
+
+  it('keeps one row for a rolled-back release with its publications attached', async () => {
+    const publications = [
+      {
+        updateId: 'rollback-publication-id',
+        publishedAt: '2026-09-27T10:30:00+00:00',
+        kind: 'rollback',
+        rolledBackFromReleaseId: 'bad-release-id',
+        rolledBackFromCommitHash: 'bad1234',
+        rolledBackFromRepositoryUrl: 'https://github.com/item7/app',
+      },
+      {
+        updateId: 'good-content-id',
+        publishedAt: '2026-09-20T09:00:00+00:00',
+        kind: 'publish',
+        rolledBackFromReleaseId: null,
+        rolledBackFromCommitHash: null,
+        rolledBackFromRepositoryUrl: null,
+      },
+    ];
+    (StorageFactory.getStorage as jest.Mock).mockReturnValue({
+      listDirectories: jest.fn().mockResolvedValue(['1.0.0']),
+      listFiles: jest.fn().mockResolvedValue([
+        { name: 'good.zip', metadata: { size: 10 } },
+        { name: 'bad.zip', metadata: { size: 20 } },
+      ]),
+    });
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({
+      listReleases: jest.fn().mockResolvedValue([
+        {
+          id: 'bad-release-id',
+          path: 'updates/1.0.0/bad.zip',
+          runtimeVersion: '1.0.0',
+          timestamp: '2026-09-25T09:00:00Z',
+          updateId: 'bad-content-id',
+          status: 'inactive',
+          publications: [],
+        },
+        {
+          id: 'good-release-id',
+          path: 'updates/1.0.0/good.zip',
+          runtimeVersion: '1.0.0',
+          timestamp: '2026-09-20T09:00:00Z',
+          updateId: 'good-content-id',
+          status: 'active',
+          publications,
+        },
+      ]),
+    });
+
+    const { req, res } = createMocks({ method: 'GET' });
+    await releasesHandler(req, res);
+
+    const { releases } = JSON.parse(res._getData());
+    expect(releases).toHaveLength(2);
+    expect(releases.filter((release: any) => release.path === 'updates/1.0.0/good.zip')).toEqual([
+      expect.objectContaining({
+        id: 'good-release-id',
+        updateId: 'good-content-id',
+        status: 'active',
+        publications,
+      }),
+    ]);
+    expect(releases[0]).toEqual(
+      expect.objectContaining({ id: 'bad-release-id', status: 'inactive', publications: [] })
+    );
   });
 
   it('should handle errors gracefully', async () => {

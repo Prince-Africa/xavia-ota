@@ -14,3 +14,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS releases_runtime_update_id_unique
   ON releases (runtime_version, update_id) WHERE update_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS releases_one_active_per_runtime_unique
   ON releases (runtime_version) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS release_publications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  release_id UUID NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+  runtime_version VARCHAR(255) NOT NULL,
+  update_id VARCHAR(255) NOT NULL,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind VARCHAR(16) NOT NULL CHECK (kind IN ('publish', 'rollback')),
+  rolled_back_from_release_id UUID REFERENCES releases(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS release_publications_runtime_update_id_unique
+  ON release_publications (runtime_version, update_id);
+CREATE INDEX IF NOT EXISTS release_publications_release_idx
+  ON release_publications (release_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS release_publications_rolled_back_from_idx
+  ON release_publications (rolled_back_from_release_id);

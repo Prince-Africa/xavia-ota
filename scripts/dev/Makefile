@@ -20,7 +20,8 @@ check-db:
 	@echo "Database is ready!"
 
 migrate:
-	# Runs all versioned migrations, including 20260926_tracking_events_and_utc.sql and 20260926_download_attempts.sql.
+	# Runs all versioned migrations, including 20260926_tracking_events_and_utc.sql,
+	# 20260926_download_attempts.sql and 20260927_release_publications.sql.
 	POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=releases_db POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres node ./scripts/migrate-postgres.js
 
 db-stop:

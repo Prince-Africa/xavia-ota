@@ -22,11 +22,21 @@ export class PostgresDatabase implements DatabaseInterface {
     });
   }
   async getLatestReleaseRecordForRuntimeVersion(runtimeVersion: string): Promise<Release | null> {
+    // Phones are offered the latest publication of the active release, so a rollback is served
+    // under its own update ID and time rather than the release's original ones.
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl", status
-      FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND status = 'active'
+      SELECT r.id, r.runtime_version as "runtimeVersion", r.path, r.timestamp,
+             r.commit_hash as "commitHash", r.commit_message as "commitMessage",
+             r.update_id as "updateId", r.repository_url as "repositoryUrl", r.status,
+             latest.update_id as "servedUpdateId", latest.published_at as "servedAt"
+      FROM ${Tables.RELEASES} r
+      LEFT JOIN LATERAL (
+        SELECT update_id, published_at FROM ${Tables.RELEASE_PUBLICATIONS} p
+        WHERE p.release_id = r.id
+        ORDER BY p.published_at DESC, p.kind = 'rollback' DESC
+        LIMIT 1
+      ) latest ON TRUE
+      WHERE r.runtime_version = $1 AND r.status = 'active'
       LIMIT 1
     `;
 
@@ -44,13 +54,22 @@ export class PostgresDatabase implements DatabaseInterface {
     return rows[0] || null;
   }
 
+  // Resolves the release's own update ID or any publication of it, so downloads that started
+  // under an earlier publication keep working after a rollback.
   async getReleaseByUpdateId(runtimeVersion: string, updateId: string): Promise<Release | null> {
     const { rows } = await this.pool.query(
       `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl", status
-      FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND update_id = $2
+      SELECT r.id, r.runtime_version as "runtimeVersion", r.path, r.timestamp,
+             r.commit_hash as "commitHash", r.commit_message as "commitMessage",
+             r.update_id as "updateId", r.repository_url as "repositoryUrl", r.status
+      FROM ${Tables.RELEASES} r
+      WHERE r.runtime_version = $1 AND (
+        r.update_id = $2 OR EXISTS (
+          SELECT 1 FROM ${Tables.RELEASE_PUBLICATIONS} p
+          WHERE p.release_id = r.id AND p.runtime_version = $1 AND p.update_id = $2
+        )
+      )
+      LIMIT 1
     `,
       [runtimeVersion, updateId]
     );
@@ -81,6 +100,15 @@ export class PostgresDatabase implements DatabaseInterface {
         .then((result) => {
           if (!result.rowCount) throw new Error('Release cannot be activated');
         });
+      // Published at activation time so the update sorts after anything a phone already has.
+      await client.query(
+        `INSERT INTO ${Tables.RELEASE_PUBLICATIONS}
+           (release_id, runtime_version, update_id, published_at, kind)
+         SELECT id, runtime_version, update_id, now(), 'publish'
+         FROM ${Tables.RELEASES} WHERE id = $1 AND update_id IS NOT NULL
+         ON CONFLICT (runtime_version, update_id) DO NOTHING`,
+        [id]
+      );
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -90,10 +118,16 @@ export class PostgresDatabase implements DatabaseInterface {
     }
   }
 
+  // Makes the release Live again under a new update ID published now. Phones only accept an update
+  // with an ID they have not stored and a newer time, so reusing the original ID would be ignored by
+  // phones that already moved past it.
   async rollbackToRelease(
     id: string,
     expectedActiveId: string
-  ): Promise<'activated' | 'already_active' | 'same_update_id' | 'active_changed' | 'not_found'> {
+  ): Promise<
+    | { outcome: 'activated'; updateId: string }
+    | { outcome: 'already_active' | 'same_update_id' | 'active_changed' | 'not_found' }
+  > {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -103,7 +137,7 @@ export class PostgresDatabase implements DatabaseInterface {
       );
       if (!runtimeRows.length) {
         await client.query('ROLLBACK');
-        return 'not_found';
+        return { outcome: 'not_found' };
       }
       const runtimeVersion = runtimeRows[0].runtime_version;
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [runtimeVersion]);
@@ -119,7 +153,7 @@ export class PostgresDatabase implements DatabaseInterface {
         !targets[0].update_id
       ) {
         await client.query('ROLLBACK');
-        return 'not_found';
+        return { outcome: 'not_found' };
       }
       const { rows: active } = await client.query(
         `SELECT id, update_id FROM ${Tables.RELEASES}
@@ -128,15 +162,15 @@ export class PostgresDatabase implements DatabaseInterface {
       );
       if (active[0]?.id === id) {
         await client.query('ROLLBACK');
-        return 'already_active';
+        return { outcome: 'already_active' };
       }
       if (active[0]?.id !== expectedActiveId) {
         await client.query('ROLLBACK');
-        return 'active_changed';
+        return { outcome: 'active_changed' };
       }
       if (active[0]?.update_id && active[0].update_id === targets[0].update_id) {
         await client.query('ROLLBACK');
-        return 'same_update_id';
+        return { outcome: 'same_update_id' };
       }
       await client.query(
         `UPDATE ${Tables.RELEASES} SET status = 'inactive'
@@ -148,8 +182,15 @@ export class PostgresDatabase implements DatabaseInterface {
          WHERE id = $1 AND runtime_version = $2`,
         [id, runtimeVersion]
       );
+      const { rows: publication } = await client.query(
+        `INSERT INTO ${Tables.RELEASE_PUBLICATIONS}
+           (release_id, runtime_version, update_id, published_at, kind, rolled_back_from_release_id)
+         VALUES ($1, $2, gen_random_uuid()::text, now(), 'rollback', $3)
+         RETURNING update_id`,
+        [id, runtimeVersion, active[0].id]
+      );
       await client.query('COMMIT');
-      return 'activated';
+      return { outcome: 'activated', updateId: publication[0].update_id };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -184,7 +225,16 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async setReleaseUpdateId(id: string, updateId: string): Promise<void> {
     await this.pool.query(
-      `UPDATE ${Tables.RELEASES} SET update_id = $2 WHERE id = $1 AND update_id IS NULL`,
+      `WITH updated AS (
+         UPDATE ${Tables.RELEASES} SET update_id = $2 WHERE id = $1 AND update_id IS NULL
+         RETURNING id, runtime_version, update_id, timestamp, status
+       )
+       INSERT INTO ${Tables.RELEASE_PUBLICATIONS}
+         (release_id, runtime_version, update_id, published_at, kind)
+       SELECT id, runtime_version, update_id,
+              CASE WHEN status = 'active' THEN now() ELSE timestamp END, 'publish'
+       FROM updated
+       ON CONFLICT (runtime_version, update_id) DO NOTHING`,
       [id, updateId]
     );
   }
@@ -457,11 +507,24 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async listReleases(): Promise<Release[]> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
-             commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
-             repository_url as "repositoryUrl", status
-      FROM ${Tables.RELEASES}
-      ORDER BY timestamp DESC
+      SELECT r.id, r.runtime_version as "runtimeVersion", r.path, r.timestamp,
+             r.commit_hash as "commitHash", r.commit_message as "commitMessage",
+             r.update_id as "updateId", r.repository_url as "repositoryUrl", r.status,
+             (
+               SELECT COALESCE(json_agg(json_build_object(
+                 'updateId', p.update_id,
+                 'publishedAt', p.published_at,
+                 'kind', p.kind,
+                 'rolledBackFromReleaseId', p.rolled_back_from_release_id,
+                 'rolledBackFromCommitHash', f.commit_hash,
+                 'rolledBackFromRepositoryUrl', f.repository_url
+               ) ORDER BY p.published_at DESC, p.kind = 'rollback' DESC), '[]'::json)
+               FROM ${Tables.RELEASE_PUBLICATIONS} p
+               LEFT JOIN ${Tables.RELEASES} f ON f.id = p.rolled_back_from_release_id
+               WHERE p.release_id = r.id
+             ) AS publications
+      FROM ${Tables.RELEASES} r
+      ORDER BY r.timestamp DESC
     `;
 
     const { rows } = await this.pool.query(query);

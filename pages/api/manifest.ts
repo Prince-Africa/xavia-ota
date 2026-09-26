@@ -98,13 +98,20 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
     return;
   }
   const updateBundlePath = releaseRecord.path.replace(/\.zip$/, '');
-  let updateId = releaseRecord.updateId;
+  // A rollback is served under its own update ID and time. Phones ignore an ID they already have and
+  // an update older than the one they run, so both must come from the latest publication.
+  let updateId = releaseRecord.servedUpdateId ?? releaseRecord.updateId;
   if (!updateId) {
     const metadata = await UpdateHelper.getMetadataAsync({ updateBundlePath, runtimeVersion });
     updateId = HashHelper.convertSHA256HashToUUID(metadata.id);
     await database.setReleaseUpdateId(releaseRecord.id, updateId);
   }
+  const createdAt = releaseRecord.servedAt
+    ? new Date(releaseRecord.servedAt).toISOString()
+    : new Date().toISOString();
 
+  // Only the exact served ID means up to date. A phone running an earlier publication of the same
+  // bundle may have a newer bad update downloaded for its next launch, so it still needs this one.
   const currentUpdateId = req.headers['expo-current-update-id'];
   if (currentUpdateId && updateId && currentUpdateId === updateId) {
     logger.info('User is already running the latest release. Returning NoUpdateAvailable.', {
@@ -130,7 +137,8 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
           protocolVersion,
           installation,
           releaseRecord.id,
-          updateId
+          updateId,
+          createdAt
         );
       } else if (updateType === UpdateType.ROLLBACK) {
         logger.info('Rollback is available.');
@@ -173,10 +181,11 @@ async function putUpdateInResponseAsync(
   protocolVersion: number,
   installation: { id: string; confirmed: boolean },
   releaseId: string,
-  updateId: string
+  updateId: string,
+  createdAt: string
 ): Promise<void> {
   const currentUpdateId = req.headers['expo-current-update-id'];
-  const { metadataJson, createdAt } = await UpdateHelper.getMetadataAsync({
+  const { metadataJson } = await UpdateHelper.getMetadataAsync({
     updateBundlePath,
     runtimeVersion,
   });

@@ -3,6 +3,7 @@ import { PostgresDatabase } from './LocalDatabase';
 export enum Tables {
   RELEASES = 'releases',
   RELEASES_TRACKING = 'releases_tracking',
+  RELEASE_PUBLICATIONS = 'release_publications',
 }
 
 export class DatabaseFactory {

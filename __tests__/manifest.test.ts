@@ -296,6 +296,114 @@ describe('Manifest API', () => {
     expect(extensions.assetRequestHeaders.key['x-installation-id']).toBe(assignedId);
   });
 
+  describe('a rolled-back release', () => {
+    const rolledBack: Release = {
+      id: 'target-release-id',
+      runtimeVersion: '1.0.0',
+      path: 'updates/1.0.0/target.zip',
+      timestamp: '2026-09-20T09:00:00Z',
+      commitHash: 'good123',
+      commitMessage: 'Known good',
+      updateId: 'target-content-id',
+      servedUpdateId: 'rollback-publication-id',
+      servedAt: '2026-09-27T10:30:00.000Z',
+      status: 'active',
+    };
+
+    function setUp() {
+      const mockDatabase = {
+        getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(rolledBack),
+        createTracking: jest.fn(),
+        recordManifestRequest: jest.fn(),
+        setReleaseUpdateId: jest.fn(),
+      };
+      (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
+      (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({
+        getEntry: jest.fn().mockReturnValue(null),
+      });
+      (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue({
+        metadataJson: { fileMetadata: { ios: { assets: [], bundle: 'bundle.js' } } },
+        createdAt: '2099-01-01T00:00:00.000Z',
+        id: 'metadata-hash',
+      });
+      (UpdateHelper.getAssetMetadataAsync as jest.Mock).mockResolvedValue({ key: 'bundle-key' });
+      (UpdateHelper.createNoUpdateAvailableDirectiveAsync as jest.Mock).mockResolvedValue({
+        type: 'noUpdateAvailable',
+      });
+      (ConfigHelper.getExpoConfigAsync as jest.Mock).mockResolvedValue({});
+      const mockFormData = {
+        append: jest.fn(),
+        getBoundary: jest.fn().mockReturnValue('boundary'),
+        getBuffer: jest.fn().mockReturnValue(Buffer.from('mock-form-data')),
+      };
+      (FormData as unknown as jest.Mock).mockImplementation(() => mockFormData);
+      return { mockDatabase, mockFormData };
+    }
+
+    function request(currentUpdateId: string) {
+      return createMocks({
+        method: 'GET',
+        headers: {
+          'expo-platform': 'ios',
+          'expo-runtime-version': '1.0.0',
+          'expo-protocol-version': '1',
+          'expo-current-update-id': currentUpdateId,
+        },
+      });
+    }
+
+    it('is offered to a phone on the bad release under the new ID and rollback time', async () => {
+      const { mockDatabase, mockFormData } = setUp();
+      const { req, res } = request('bad-release-id');
+
+      await manifestEndpoint(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      const manifest = JSON.parse(
+        mockFormData.append.mock.calls.find(([name]) => name === 'manifest')![1]
+      );
+      expect(manifest.id).toBe('rollback-publication-id');
+      expect(manifest.createdAt).toBe('2026-09-27T10:30:00.000Z');
+      expect(UpdateHelper.getAssetMetadataAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ updateId: 'rollback-publication-id' })
+      );
+      expect(ZipHelper.getZipFromStorage).toHaveBeenCalledWith('updates/1.0.0/target');
+      expect(mockDatabase.recordManifestRequest).toHaveBeenCalledWith('target-release-id', 'ios');
+      expect(mockDatabase.setReleaseUpdateId).not.toHaveBeenCalled();
+    });
+
+    it('is still offered to a phone running the same bundle under its original ID', async () => {
+      const { mockFormData } = setUp();
+      const { req, res } = request('target-content-id');
+
+      await manifestEndpoint(req, res);
+
+      const manifest = JSON.parse(
+        mockFormData.append.mock.calls.find(([name]) => name === 'manifest')![1]
+      );
+      expect(manifest.id).toBe('rollback-publication-id');
+    });
+
+    it('is not offered again once the phone has the rollback publication', async () => {
+      const { mockFormData } = setUp();
+      const { req, res } = request('rollback-publication-id');
+
+      await manifestEndpoint(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockFormData.append).toHaveBeenCalledWith(
+        'directive',
+        JSON.stringify({ type: 'noUpdateAvailable' }),
+        expect.any(Object)
+      );
+      expect(mockFormData.append).not.toHaveBeenCalledWith(
+        'manifest',
+        expect.anything(),
+        expect.anything()
+      );
+    });
+  });
+
   it('should handle rollback update successfully', async () => {
     // Mock database
     const mockDatabase = {

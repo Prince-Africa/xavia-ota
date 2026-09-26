@@ -9,7 +9,23 @@ export interface Release {
   repositoryUrl: string | null;
   updateId: string | null;
   status: 'active' | 'inactive';
+  // Newest first. A release has one 'publish' entry and one 'rollback' entry per rollback to it.
+  publications: ReleasePublication[];
   archiveAvailable: boolean;
+}
+
+export interface ReleasePublication {
+  updateId: string;
+  publishedAt: string;
+  kind: 'publish' | 'rollback';
+  rolledBackFromReleaseId: string | null;
+  rolledBackFromCommitHash: string | null;
+  rolledBackFromRepositoryUrl: string | null;
+}
+
+// The update ID phones are offered when this release is Live.
+export function servedUpdateId(release: Release): string | null {
+  return release.publications[0]?.updateId ?? release.updateId;
 }
 
 export function formatFileSize(bytes: number): string {

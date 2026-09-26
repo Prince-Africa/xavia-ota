@@ -165,7 +165,7 @@ We use a simple rollback-forward mechanism. When a new update is published, it b
 
 If anything goes wrong with the active update, and you want to rollback to the inactive one, you can simply click a button in the admin dashboard. 
 
-What happens behind the scenes is that we copy the inactive update with a new timestamp and push it to the front of the queue of updates, effectively making it the new active update.
+What happens behind the scenes is that the chosen release becomes the active one again and gets a new publication: a fresh update ID with the rollback time as its `createdAt`. Phones only accept an update ID they have not seen with a newer time, so they receive the rolled-back bundle as a new update on their next check and run it on the next cold start. The existing archive is reused; nothing is copied, and the dashboard keeps one row per release with its rollback history underneath.
 
 ## Admin Dashboard
 

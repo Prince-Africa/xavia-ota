@@ -8,6 +8,19 @@ export interface Release {
   updateId?: string;
   status?: 'uploading' | 'active' | 'inactive' | 'failed';
   repositoryUrl?: string | null;
+  // The update ID and time phones are currently offered: the latest publication of this release.
+  servedUpdateId?: string | null;
+  servedAt?: string | null;
+  publications?: ReleasePublication[];
+}
+
+export interface ReleasePublication {
+  updateId: string;
+  publishedAt: string;
+  kind: 'publish' | 'rollback';
+  rolledBackFromReleaseId: string | null;
+  rolledBackFromCommitHash: string | null;
+  rolledBackFromRepositoryUrl: string | null;
 }
 
 export interface Tracking {

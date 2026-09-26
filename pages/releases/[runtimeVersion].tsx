@@ -30,7 +30,12 @@ import Layout from '../../components/Layout';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
-import { formatFileSize, Release } from '../../components/releases';
+import {
+  formatFileSize,
+  Release,
+  ReleasePublication,
+  servedUpdateId,
+} from '../../components/releases';
 import { showToast } from '../../components/toast';
 import { formatWatTimestamp } from '../../components/time';
 
@@ -63,6 +68,14 @@ interface ReleaseMetricsState {
   loading?: boolean;
   error?: boolean;
 }
+
+// One line in a release's history: its own publications, plus rollbacks that moved Live away
+// from it to another release.
+type HistoryEvent =
+  | { kind: 'publish' | 'rollback'; at: string; publication: ReleasePublication }
+  | { kind: 'replaced'; at: string; byRelease: Release | undefined };
+
+const historyDate = (value: string) => formatWatTimestamp(value, 'D MMM, HH:mm');
 
 export default function RuntimeReleasesPage() {
   const router = useRouter();
@@ -153,7 +166,7 @@ export default function RuntimeReleasesPage() {
         throw new Error(result.error || 'Rollback failed');
       }
 
-      showToast('Rolled back. This release is now live.', 'success');
+      showToast('Rolled back. Phones get this release on their next update check.', 'success');
       fetchReleases();
       setIsOpen(false);
     } catch (error) {
@@ -190,6 +203,69 @@ export default function RuntimeReleasesPage() {
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
   const activeRelease = releases.find((release) => release.status === 'active');
+  const activePublication = activeRelease?.publications[0];
+  const releaseById = new Map(releases.map((release) => [release.id, release]));
+
+  const historyFor = (release: Release): HistoryEvent[] => {
+    const own: HistoryEvent[] = release.publications.map((publication) => ({
+      kind: publication.kind,
+      // The row shows the release's publish time, so the history uses the same one.
+      at: publication.kind === 'publish' ? release.timestamp : publication.publishedAt,
+      publication,
+    }));
+    const replaced: HistoryEvent[] = releases.flatMap((other) =>
+      other.publications
+        .filter((publication) => publication.rolledBackFromReleaseId === release.id)
+        .map((publication) => ({
+          kind: 'replaced' as const,
+          at: publication.publishedAt,
+          byRelease: other,
+        }))
+    );
+    return [...own, ...replaced].sort(
+      (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+    );
+  };
+
+  const showRelease = (releaseId: string) => {
+    if (expandedReleaseId !== releaseId) toggleRelease(releaseId);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`release-row-${releaseId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    );
+  };
+
+  // Jumps to another row, which is where it can be rolled back to (again).
+  const releaseLink = (releaseId: string | null, fallbackHash: string | null) => {
+    const release = releaseId ? releaseById.get(releaseId) : undefined;
+    const hash = release?.commitHash ?? fallbackHash;
+    const label = hash ? hash.slice(0, 7) : 'an earlier release';
+    if (!release) {
+      return (
+        <Text as="span" fontFamily={hash ? 'mono' : undefined}>
+          {label}
+        </Text>
+      );
+    }
+    return (
+      <Button
+        variant="link"
+        color="white"
+        fontFamily={hash ? 'mono' : undefined}
+        fontSize="inherit"
+        fontWeight="normal"
+        verticalAlign="baseline"
+        textDecoration="underline"
+        textDecorationColor="rgba(255,255,255,.2)"
+        textUnderlineOffset="3px"
+        _hover={{ textDecorationColor: 'primary.500' }}
+        aria-label={`Show release ${label}`}
+        onClick={() => showRelease(release.id)}>
+        {label}
+      </Button>
+    );
+  };
 
   return (
     <ProtectedRoute>
@@ -271,7 +347,7 @@ export default function RuntimeReleasesPage() {
                   Update ID
                 </Text>
                 <Text mt={1} fontFamily="mono" fontSize="xs" wordBreak="break-all">
-                  {activeRelease.updateId || 'Unavailable'}
+                  {servedUpdateId(activeRelease) || 'Unavailable'}
                 </Text>
               </Box>
               <Box>
@@ -283,6 +359,16 @@ export default function RuntimeReleasesPage() {
                 </Text>
               </Box>
             </Flex>
+            {activePublication?.kind === 'rollback' && (
+              <Text fontSize="sm" color="muted" mt={4}>
+                Rolled back to this on {historyDate(activePublication.publishedAt)}, away from{' '}
+                {releaseLink(
+                  activePublication.rolledBackFromReleaseId,
+                  activePublication.rolledBackFromCommitHash
+                )}
+                .
+              </Text>
+            )}
           </Box>
         )}
 
@@ -321,6 +407,7 @@ export default function RuntimeReleasesPage() {
                 {sortedReleases.map((release) => (
                   <Fragment key={release.id}>
                     <Tr
+                      id={`release-row-${release.id}`}
                       transition="background .15s"
                       _hover={{ bg: 'rgba(255,255,255,.02)' }}
                       _last={{ td: { borderBottom: 'none' } }}>
@@ -372,6 +459,23 @@ export default function RuntimeReleasesPage() {
                       </Td>
                       <Td whiteSpace="nowrap" color="muted">
                         {formatWatTimestamp(release.timestamp, 'MMM D, HH:mm')}
+                        {release.publications.some(({ kind }) => kind === 'rollback') && (
+                          <Tooltip
+                            label={`Rolled back to on ${release.publications
+                              .filter(({ kind }) => kind === 'rollback')
+                              .map(({ publishedAt }) => historyDate(publishedAt))
+                              .join(', ')}`}>
+                            <Box
+                              as="span"
+                              display="inline-flex"
+                              verticalAlign="middle"
+                              ml={2}
+                              color="muted"
+                              aria-label="Rolled back to">
+                              <FiRotateCcw size={12} />
+                            </Box>
+                          </Tooltip>
+                        )}
                       </Td>
                       <Td
                         isNumeric
@@ -420,12 +524,113 @@ export default function RuntimeReleasesPage() {
                       <Tr>
                         <Td colSpan={6} bg="field" px={{ base: 4, md: 6 }} py={5}>
                           <Box id={`release-metrics-${release.id}`}>
-                            <Text color="muted" fontSize="xs" mb={4}>
-                              Update ID:{' '}
-                              <Text as="span" color="white" fontFamily="mono" wordBreak="break-all">
-                                {release.updateId || 'Unavailable'}
+                            {release.publications.length === 0 ? (
+                              <Text color="muted" fontSize="xs" mb={4}>
+                                Update ID:{' '}
+                                <Text
+                                  as="span"
+                                  color="white"
+                                  fontFamily="mono"
+                                  wordBreak="break-all">
+                                  {release.updateId || 'Unavailable'}
+                                </Text>
                               </Text>
-                            </Text>
+                            ) : (
+                              <Box mb={6} maxW="44rem">
+                                <Box
+                                  as="ol"
+                                  listStyleType="none"
+                                  ml="3px"
+                                  pl={5}
+                                  borderLeft="1px solid"
+                                  borderColor="line">
+                                  {historyFor(release).map((event, index) => {
+                                    const live =
+                                      release.status === 'active' &&
+                                      event.kind !== 'replaced' &&
+                                      event.publication === release.publications[0];
+                                    return (
+                                      <Box
+                                        as="li"
+                                        key={`${event.kind}-${event.at}-${index}`}
+                                        position="relative"
+                                        _notLast={{ pb: 4 }}>
+                                        <Box
+                                          position="absolute"
+                                          left="calc(-1.25rem - 4px)"
+                                          top="7px"
+                                          boxSize="7px"
+                                          borderRadius="full"
+                                          bg={
+                                            live
+                                              ? 'verified.dot'
+                                              : event.kind === 'publish'
+                                              ? 'muted'
+                                              : 'warning.border'
+                                          }
+                                          boxShadow="0 0 0 3px var(--chakra-colors-field)"
+                                        />
+                                        <Text fontSize="sm">
+                                          {event.kind === 'publish' && (
+                                            <>Published on {historyDate(event.at)}</>
+                                          )}
+                                          {event.kind === 'rollback' && (
+                                            <>
+                                              Rolled back to this on {historyDate(event.at)}, away
+                                              from{' '}
+                                              {releaseLink(
+                                                event.publication.rolledBackFromReleaseId,
+                                                event.publication.rolledBackFromCommitHash
+                                              )}
+                                            </>
+                                          )}
+                                          {event.kind === 'replaced' && (
+                                            <Text as="span" color="muted">
+                                              Rolled back away from this on {historyDate(event.at)},
+                                              to{' '}
+                                              {releaseLink(
+                                                event.byRelease?.id ?? null,
+                                                event.byRelease?.commitHash ?? null
+                                              )}
+                                            </Text>
+                                          )}
+                                          {live && (
+                                            <Text as="span" color="verified.text" ml={2}>
+                                              Live
+                                            </Text>
+                                          )}
+                                        </Text>
+                                        {event.kind !== 'replaced' && (
+                                          <Text
+                                            color="muted"
+                                            fontFamily="mono"
+                                            fontSize="xs"
+                                            mt={1}
+                                            wordBreak="break-all">
+                                            {event.publication.updateId}
+                                          </Text>
+                                        )}
+                                      </Box>
+                                    );
+                                  })}
+                                </Box>
+                                {release.status === 'inactive' && (
+                                  <Text color="muted" fontSize="xs" mt={4}>
+                                    Phones aren’t offered this release now.{' '}
+                                    <Button
+                                      variant="link"
+                                      fontSize="inherit"
+                                      fontWeight="normal"
+                                      color="warning.text"
+                                      verticalAlign="baseline"
+                                      onClick={() => openRollback(release)}>
+                                      Roll back to it
+                                    </Button>{' '}
+                                    to make it Live again. Phones get it as a new update.
+                                  </Text>
+                                )}
+                              </Box>
+                            )}
                             {releaseMetrics[release.id]?.loading && (
                               <Text color="muted" fontSize="sm">
                                 Loading metrics…
@@ -515,10 +720,10 @@ export default function RuntimeReleasesPage() {
                     </Text>
                     {(
                       [
-                        ['Current active', rollbackPreview.current],
-                        ['Rollback target', rollbackPreview.target],
+                        ['Live now', rollbackPreview.current, rollbackPreview.current.updateId],
+                        ['Roll back to', rollbackPreview.target, 'new ID on roll back'],
                       ] as const
-                    ).map(([label, release]) => (
+                    ).map(([label, release, updateId]) => (
                       <Box
                         key={label}
                         bg="field"
@@ -535,13 +740,18 @@ export default function RuntimeReleasesPage() {
                           Commit: {release.commitHash || 'unknown'}
                         </Text>
                         <Text fontSize="xs" fontFamily="mono" wordBreak="break-all">
-                          Update ID: {release.updateId || 'unavailable'}
+                          Update ID: {updateId || 'unavailable'}
                         </Text>
                         <Text fontSize="xs" color="muted" mt={1}>
                           Published: {formatWatTimestamp(release.timestamp)}
                         </Text>
                       </Box>
                     ))}
+                    <Text fontSize="sm" mb={3}>
+                      Phones receive this bundle as a new update on their next update check and run
+                      it the next time the app starts from closed. An open app keeps its current
+                      bundle until then.
+                    </Text>
                     <Text fontSize="sm">
                       Estimated affected installations:{' '}
                       <Text as="span" fontFamily="mono">
