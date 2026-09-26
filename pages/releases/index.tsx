@@ -16,7 +16,6 @@ import {
   Tr,
 } from '@chakra-ui/react';
 import NextLink from 'next/link';
-import moment from 'moment';
 import { useEffect, useState } from 'react';
 import { FiArrowRight, FiRefreshCw, FiSearch } from 'react-icons/fi';
 
@@ -25,6 +24,7 @@ import Layout from '../../components/Layout';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
+import { formatUtcTimestamp } from '../../components/time';
 
 interface RuntimeSummary {
   version: string;
@@ -175,9 +175,7 @@ export default function ReleasesPage() {
                         )}
                       </Td>
                       <Td whiteSpace="nowrap" color="muted">
-                        {moment(runtime.latestPublishedAt)
-                          .utcOffset(60)
-                          .format('MMM D, YYYY HH:mm')}
+                        {formatUtcTimestamp(runtime.latestPublishedAt)}
                       </Td>
                       <Td>
                         <Flex

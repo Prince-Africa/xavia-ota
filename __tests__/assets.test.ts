@@ -55,14 +55,16 @@ describe('Assets API', () => {
 
     const getReleaseByUpdateId = jest
       .fn()
-      .mockResolvedValue({ path: 'path/to/update.zip', status: 'inactive' });
-    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({ getReleaseByUpdateId });
+      .mockResolvedValue({ id: 'release-id', path: 'path/to/update.zip', status: 'inactive' });
+    const recordAssetRequest = jest.fn();
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({ getReleaseByUpdateId, recordAssetRequest });
     (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue(mockMetadata);
     (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({});
     (ZipHelper.getFileFromZip as jest.Mock).mockResolvedValue(Buffer.from('test'));
 
     const { req, res } = createMocks({
       method: 'GET',
+      headers: { 'x-installation-id': '576634c0-6482-4c50-8c60-169f7ac9b7b8' },
       query: {
         asset: 'test.png',
         platform: 'ios',
@@ -75,6 +77,9 @@ describe('Assets API', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(res._getData()).toMatchSnapshot();
     expect(getReleaseByUpdateId).toHaveBeenCalledWith('1.0.0', 'exact-update-id');
+    expect(recordAssetRequest).toHaveBeenCalledWith(
+      'release-id', 'ios', 4, '576634c0-6482-4c50-8c60-169f7ac9b7b8'
+    );
     expect(ZipHelper.getZipFromStorage).toHaveBeenCalledWith('path/to/update');
   });
 

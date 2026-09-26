@@ -30,7 +30,8 @@ describe('runtime installation metrics', () => {
     const sql = query.mock.calls[0][0];
     expect(sql).toContain('JOIN releases r ON r.id = t.release_id');
     expect(sql).toContain('r.runtime_version = $1');
-    expect(sql).toContain("date_trunc('month', t.download_timestamp + interval '1 hour')");
+    expect(sql).toContain("date_trunc('month', t.download_timestamp AT TIME ZONE 'UTC')");
+    expect(sql).toContain('t.offered_release = TRUE');
   });
 
   it('passes the selected runtime to the API metrics query', async () => {
@@ -51,5 +52,23 @@ describe('runtime installation metrics', () => {
       androidInstalls: 3,
       uniqueInstallsThisMonth: 4,
     });
+  });
+
+  it('qualifies a legacy installation only after an offered manifest', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    (Pool as unknown as jest.Mock).mockImplementation(() => ({ query }));
+    const database = new PostgresDatabase();
+
+    await database.createTracking({
+      releaseId: 'release-id',
+      platform: 'ios',
+      installationId: '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+    });
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][0]).toContain('SET offered_release = TRUE');
+    expect(query.mock.calls[1][0]).toContain(
+      'ON CONFLICT (release_id, installation_id) WHERE installation_id IS NOT NULL DO NOTHING'
+    );
   });
 });

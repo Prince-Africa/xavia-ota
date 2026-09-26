@@ -69,7 +69,8 @@ describe('Manifest API', () => {
     const mockDatabase = {
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(mockRelease),
       createTracking: jest.fn(),
-    } as unknown as DatabaseInterface;
+      recordManifestRequest: jest.fn(),
+    };
 
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
 
@@ -126,11 +127,9 @@ describe('Manifest API', () => {
     expect(second.res.getHeader('expo-server-defined-headers')).toBe(
       `x-installation-id="${installationId}"`
     );
-    expect(mockDatabase.createTracking).toHaveBeenCalledWith({
-      releaseId: mockRelease.id,
-      platform: 'ios',
-      installationId,
-    });
+    expect(mockDatabase.createTracking).not.toHaveBeenCalled();
+    expect(mockDatabase.recordManifestRequest).toHaveBeenCalledTimes(2);
+    expect(mockDatabase.recordManifestRequest).toHaveBeenCalledWith('release-id', 'ios');
   });
 
   it('should look for an update when the request and release have no update ID', async () => {
@@ -194,7 +193,8 @@ describe('Manifest API', () => {
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(mockRelease),
       getReleaseByPath: jest.fn().mockResolvedValue(mockRelease),
       createTracking: jest.fn().mockResolvedValue(undefined),
-    } as unknown as DatabaseInterface;
+      recordManifestRequest: jest.fn(),
+    };
 
     (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
 
@@ -245,6 +245,21 @@ describe('Manifest API', () => {
     };
     (FormData as unknown as jest.Mock).mockImplementation(() => mockFormData);
 
+    const first = createMocks({
+      method: 'GET',
+      headers: {
+        'expo-platform': 'ios',
+        'expo-runtime-version': '1.0.0',
+        'expo-protocol-version': '1',
+        'expo-current-update-id': 'current-update-id',
+      },
+    });
+    await manifestEndpoint(first.req, first.res);
+    const assignedId = String(first.res.getHeader('expo-server-defined-headers')).match(
+      /"([0-9a-f-]+)"/
+    )![1];
+    expect(mockDatabase.createTracking).not.toHaveBeenCalled();
+
     const { req, res } = createMocks({
       method: 'GET',
       headers: {
@@ -252,7 +267,7 @@ describe('Manifest API', () => {
         'expo-runtime-version': '1.0.0',
         'expo-protocol-version': '1',
         'expo-current-update-id': 'current-update-id', // Different from the release updateId
-        'x-installation-id': '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+        'x-installation-id': assignedId,
       },
     });
 
@@ -262,13 +277,23 @@ describe('Manifest API', () => {
     expect(mockDatabase.createTracking).toHaveBeenCalledWith({
       platform: 'ios',
       releaseId: 'release-id',
-      installationId: '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+      installationId: assignedId,
     });
+    expect(mockDatabase.recordManifestRequest).toHaveBeenCalledWith('release-id', 'ios');
     expect(mockFormData.append).toHaveBeenCalledWith(
       'manifest',
       expect.any(String),
       expect.any(Object)
     );
+    expect(mockFormData.append).toHaveBeenCalledWith(
+      'extensions',
+      expect.stringContaining('x-installation-id'),
+      expect.any(Object)
+    );
+    const extensions = JSON.parse(
+      mockFormData.append.mock.calls.find(([name]) => name === 'extensions')![1]
+    );
+    expect(extensions.assetRequestHeaders.key['x-installation-id']).toBe(assignedId);
   });
 
   it('should handle rollback update successfully', async () => {

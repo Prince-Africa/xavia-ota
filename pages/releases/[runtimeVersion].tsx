@@ -20,7 +20,6 @@ import {
   SimpleGrid,
   Link,
 } from '@chakra-ui/react';
-import moment from 'moment';
 import NextLink from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -33,6 +32,7 @@ import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
 import { formatFileSize, Release } from '../../components/releases';
 import { showToast } from '../../components/toast';
+import { formatUtcTimestamp } from '../../components/time';
 
 interface RollbackPreview {
   runtimeVersion: string;
@@ -188,10 +188,10 @@ export default function RuntimeReleasesPage() {
           <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4} mb={8}>
             {(
               [
-                ['iOS installs', metrics.iosInstalls],
-                ['Android installs', metrics.androidInstalls],
+                ['iOS installations offered', metrics.iosInstalls],
+                ['Android installations offered', metrics.androidInstalls],
                 ['Releases published', releases.length],
-                ['Unique installs this month', metrics.uniqueInstallsThisMonth],
+                ['Unique installations offered this month', metrics.uniqueInstallsThisMonth],
               ] as const
             ).map(([label, value]) => (
               <Box
@@ -243,7 +243,7 @@ export default function RuntimeReleasesPage() {
                   Published
                 </Text>
                 <Text mt={1} fontSize="sm">
-                  {moment(activeRelease.timestamp).utcOffset(60).format('MMM D, YYYY HH:mm')}
+                  {formatUtcTimestamp(activeRelease.timestamp)}
                 </Text>
               </Box>
             </Flex>
@@ -316,7 +316,7 @@ export default function RuntimeReleasesPage() {
                       </Tooltip>
                     </Td>
                     <Td whiteSpace="nowrap" color="muted">
-                      {moment(release.timestamp).utcOffset(60).format('MMM D, HH:mm')}
+                      {formatUtcTimestamp(release.timestamp, 'MMM D, HH:mm')}
                     </Td>
                     <Td isNumeric fontFamily="mono" fontSize="xs" color="muted" whiteSpace="nowrap">
                       {formatFileSize(release.size)}
@@ -409,8 +409,7 @@ export default function RuntimeReleasesPage() {
                           Update ID: {release.updateId || 'unavailable'}
                         </Text>
                         <Text fontSize="xs" color="muted" mt={1}>
-                          Published:{' '}
-                          {moment(release.timestamp).utcOffset(60).format('MMM D, YYYY HH:mm')}
+                          Published: {formatUtcTimestamp(release.timestamp)}
                         </Text>
                       </Box>
                     ))}

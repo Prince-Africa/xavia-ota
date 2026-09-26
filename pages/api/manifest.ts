@@ -37,6 +37,14 @@ async function trackInstallation(releaseId: string, platform: string, installati
   }
 }
 
+async function countManifestRequest(releaseId: string, platform: string) {
+  try {
+    await DatabaseFactory.getDatabase().recordManifestRequest(releaseId, platform);
+  } catch (error) {
+    logger.error('Failed to count manifest request', { releaseId, error });
+  }
+}
+
 export default async function manifestEndpoint(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.statusCode = 405;
@@ -103,9 +111,7 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
       runtimeVersion,
     });
     await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
-    if (installation.confirmed && res.statusCode === 200) {
-      await trackInstallation(releaseRecord.id, platform, installation.id);
-    }
+    if (res.statusCode === 200) await countManifestRequest(releaseRecord.id, platform);
     return;
   }
 
@@ -129,11 +135,13 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
       } else if (updateType === UpdateType.ROLLBACK) {
         logger.info('Rollback is available.');
         await putRollBackInResponseAsync(req, res, updateBundlePath, protocolVersion);
+        if (res.statusCode === 200) await countManifestRequest(releaseRecord.id, platform);
       }
     } catch (maybeNoUpdateAvailableError) {
       if (maybeNoUpdateAvailableError instanceof NoUpdateAvailableError) {
         logger.info('psych!! User already running latest available update');
         await putNoUpdateAvailableInResponseAsync(req, res, protocolVersion);
+        if (res.statusCode === 200) await countManifestRequest(releaseRecord.id, platform);
         return;
       }
       throw maybeNoUpdateAvailableError;
@@ -240,7 +248,7 @@ async function putUpdateInResponseAsync(
   const assetRequestHeaders: { [key: string]: object } = {};
   [...manifest.assets, manifest.launchAsset].forEach((asset) => {
     assetRequestHeaders[asset.key] = {
-      'test-header': 'test-header-value',
+      'x-installation-id': installation.id,
     };
   });
 
@@ -263,6 +271,8 @@ async function putUpdateInResponseAsync(
   res.setHeader('content-type', `multipart/mixed; boundary=${form.getBoundary()}`);
   res.write(form.getBuffer());
   res.end();
+
+  await countManifestRequest(releaseId, platform);
 
   if (installation.confirmed) {
     try {

@@ -1,6 +1,5 @@
 import formidable from 'formidable';
 import fs from 'fs';
-import moment from 'moment';
 import { NextApiRequest, NextApiResponse } from 'next';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
@@ -64,7 +63,7 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
         release = await database.createRelease({
           path: `updates/${runtimeVersion}/${randomUUID()}.zip`,
           runtimeVersion,
-          timestamp: moment().utc().toString(),
+          timestamp: new Date().toISOString(),
           commitHash,
           commitMessage,
           updateId,

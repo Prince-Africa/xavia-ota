@@ -23,7 +23,7 @@ export class PostgresDatabase implements DatabaseInterface {
   }
   async getLatestReleaseRecordForRuntimeVersion(runtimeVersion: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND status = 'active'
@@ -35,7 +35,7 @@ export class PostgresDatabase implements DatabaseInterface {
   }
   async getReleaseByPath(path: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE path = $1
@@ -47,7 +47,7 @@ export class PostgresDatabase implements DatabaseInterface {
   async getReleaseByUpdateId(runtimeVersion: string, updateId: string): Promise<Release | null> {
     const { rows } = await this.pool.query(
       `
-      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE runtime_version = $1 AND update_id = $2
@@ -192,19 +192,62 @@ export class PostgresDatabase implements DatabaseInterface {
   async createTracking(
     tracking: Pick<Tracking, 'releaseId' | 'platform' | 'installationId'>
   ): Promise<void> {
+    // A legacy row may have come from a no-update check. Qualify it only after a manifest offer.
+    await this.pool.query(
+      `UPDATE ${Tables.RELEASES_TRACKING}
+       SET offered_release = TRUE,
+           platform = $3,
+           download_timestamp = now()
+       WHERE release_id = $1 AND installation_id = $2 AND offered_release = FALSE`,
+      [tracking.releaseId, tracking.installationId, tracking.platform]
+    );
     const query = `
-      INSERT INTO ${Tables.RELEASES_TRACKING} (release_id, platform, installation_id)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (release_id, installation_id) DO NOTHING
+      INSERT INTO ${Tables.RELEASES_TRACKING} (release_id, platform, installation_id, offered_release)
+      VALUES ($1, $2, $3, TRUE)
+      ON CONFLICT (release_id, installation_id) WHERE installation_id IS NOT NULL DO NOTHING
     `;
     await this.pool.query(query, [tracking.releaseId, tracking.platform, tracking.installationId]);
   }
 
+  async recordManifestRequest(releaseId: string, platform: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO release_request_metrics (release_id, platform, manifest_requests)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (release_id, platform) DO UPDATE SET
+         manifest_requests = release_request_metrics.manifest_requests + 1`,
+      [releaseId, platform]
+    );
+  }
+
+  async recordAssetRequest(
+    releaseId: string,
+    platform: string,
+    bytes: number,
+    installationId: string | null
+  ): Promise<void> {
+    await this.pool.query(
+      `WITH attempt AS (
+         INSERT INTO release_download_attempts (release_id, installation_id, platform)
+         SELECT $1, $4::uuid, $2 WHERE $4::uuid IS NOT NULL
+         ON CONFLICT (release_id, installation_id) DO NOTHING
+         RETURNING 1
+       )
+       INSERT INTO release_request_metrics
+         (release_id, platform, asset_requests, bytes_transferred, download_attempts)
+       VALUES ($1, $2, 1, $3, (SELECT COUNT(*) FROM attempt))
+       ON CONFLICT (release_id, platform) DO UPDATE SET
+         asset_requests = release_request_metrics.asset_requests + 1,
+         bytes_transferred = release_request_metrics.bytes_transferred + EXCLUDED.bytes_transferred,
+         download_attempts = release_request_metrics.download_attempts + EXCLUDED.download_attempts`,
+      [releaseId, platform, bytes, installationId]
+    );
+  }
+
   async getReleaseTrackingMetrics(releaseId: string): Promise<TrackingMetrics[]> {
     const query = `
-      SELECT platform, COUNT(*) as count
+      SELECT platform, COUNT(DISTINCT installation_id) as count
       FROM ${Tables.RELEASES_TRACKING}
-      WHERE release_id = $1 AND installation_id IS NOT NULL
+      WHERE release_id = $1 AND installation_id IS NOT NULL AND offered_release = TRUE
       GROUP BY platform
     `;
     const { rows } = await this.pool.query(query, [releaseId]);
@@ -216,9 +259,9 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getReleaseTrackingMetricsForAllReleases(): Promise<TrackingMetrics[]> {
     const query = `
-      SELECT platform, COUNT(*) as count
+      SELECT platform, COUNT(DISTINCT installation_id) as count
       FROM ${Tables.RELEASES_TRACKING}
-      WHERE installation_id IS NOT NULL
+      WHERE installation_id IS NOT NULL AND offered_release = TRUE
       GROUP BY platform
     `;
     const { rows } = await this.pool.query(query);
@@ -230,11 +273,11 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getMonthlyInstallationMetrics(): Promise<MonthlyInstallationMetrics[]> {
     const { rows } = await this.pool.query(`
-      SELECT to_char(date_trunc('month', download_timestamp + interval '1 hour'), 'YYYY-MM') AS month,
+      SELECT to_char(date_trunc('month', download_timestamp AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
              COUNT(DISTINCT installation_id) AS count
       FROM ${Tables.RELEASES_TRACKING}
-      WHERE installation_id IS NOT NULL
-      GROUP BY date_trunc('month', download_timestamp + interval '1 hour')
+      WHERE installation_id IS NOT NULL AND offered_release = TRUE
+      GROUP BY date_trunc('month', download_timestamp AT TIME ZONE 'UTC')
       ORDER BY month DESC
     `);
     return rows.map((row) => ({ month: row.month, count: Number(row.count) }));
@@ -250,12 +293,12 @@ export class PostgresDatabase implements DatabaseInterface {
          COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'ios') AS "iosInstalls",
          COUNT(DISTINCT t.installation_id) FILTER (WHERE t.platform = 'android') AS "androidInstalls",
          COUNT(DISTINCT t.installation_id) FILTER (
-           WHERE date_trunc('month', t.download_timestamp + interval '1 hour') =
-                 date_trunc('month', (now() AT TIME ZONE 'UTC') + interval '1 hour')
+           WHERE date_trunc('month', t.download_timestamp AT TIME ZONE 'UTC') =
+                 date_trunc('month', now() AT TIME ZONE 'UTC')
          ) AS "uniqueInstallsThisMonth"
        FROM ${Tables.RELEASES_TRACKING} t
        JOIN ${Tables.RELEASES} r ON r.id = t.release_id
-       WHERE r.runtime_version = $1 AND t.installation_id IS NOT NULL`,
+       WHERE r.runtime_version = $1 AND t.installation_id IS NOT NULL AND t.offered_release = TRUE`,
       [runtimeVersion]
     );
     return {
@@ -263,6 +306,62 @@ export class PostgresDatabase implements DatabaseInterface {
       androidInstalls: Number(rows[0].androidInstalls),
       uniqueInstallsThisMonth: Number(rows[0].uniqueInstallsThisMonth),
     };
+  }
+
+  async getReleaseMetricsHierarchy(): Promise<
+    {
+      releaseId: string;
+      runtimeVersion: string;
+      updateId: string | null;
+      status: string;
+      publishedAt: Date;
+      platform: string;
+      uniqueInstallations: number;
+      manifestRequests: number;
+      downloadAttempts: number;
+      assetRequests: number;
+      bytesTransferred: number;
+    }[]
+  > {
+    const { rows } = await this.pool.query(`
+      SELECT r.id AS "releaseId", r.runtime_version AS "runtimeVersion",
+             r.update_id AS "updateId", r.status, r.timestamp AS "publishedAt",
+             platforms.platform,
+             COALESCE(installs.count, 0) AS "uniqueInstallations",
+             COALESCE(metrics.manifest_requests, 0) AS "manifestRequests",
+             COALESCE(metrics.download_attempts, 0) AS "downloadAttempts",
+             COALESCE(metrics.asset_requests, 0) AS "assetRequests",
+             COALESCE(metrics.bytes_transferred, 0) AS "bytesTransferred"
+      FROM ${Tables.RELEASES} r
+      CROSS JOIN (VALUES ('ios'), ('android')) AS platforms(platform)
+      LEFT JOIN (
+        SELECT release_id, platform, COUNT(DISTINCT installation_id) AS count
+        FROM ${Tables.RELEASES_TRACKING}
+        WHERE installation_id IS NOT NULL AND offered_release = TRUE
+        GROUP BY release_id, platform
+      ) installs ON installs.release_id = r.id AND installs.platform = platforms.platform
+      LEFT JOIN release_request_metrics metrics
+        ON metrics.release_id = r.id AND metrics.platform = platforms.platform
+      WHERE r.status IN ('active', 'inactive')
+      ORDER BY r.runtime_version DESC, r.timestamp DESC, platforms.platform
+    `);
+    return rows.map((row) => ({
+      ...row,
+      uniqueInstallations: Number(row.uniqueInstallations),
+      manifestRequests: Number(row.manifestRequests),
+      downloadAttempts: Number(row.downloadAttempts),
+      assetRequests: Number(row.assetRequests),
+      bytesTransferred: Number(row.bytesTransferred),
+    }));
+  }
+
+  async getGlobalUniqueInstallations(): Promise<number> {
+    const { rows } = await this.pool.query(
+      `SELECT COUNT(DISTINCT installation_id) AS count
+       FROM ${Tables.RELEASES_TRACKING}
+       WHERE installation_id IS NOT NULL AND offered_release = TRUE`
+    );
+    return Number(rows[0].count);
   }
 
   async listRuntimeSummaries(
@@ -285,7 +384,7 @@ export class PostgresDatabase implements DatabaseInterface {
       this.pool.query(
         `WITH published AS (
            SELECT runtime_version AS version, COUNT(*)::int AS "releaseCount",
-                  MAX(timestamp) AT TIME ZONE 'UTC' AS "latestPublishedAt"
+                  MAX(timestamp) AS "latestPublishedAt"
            FROM ${Tables.RELEASES}
            WHERE ${filter}
            GROUP BY runtime_version
@@ -312,7 +411,7 @@ export class PostgresDatabase implements DatabaseInterface {
     const query = `
       INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp, commit_hash as "commitHash", update_id as "updateId",
+      RETURNING id, runtime_version as "runtimeVersion", path, timestamp, commit_hash as "commitHash", update_id as "updateId",
                 commit_message as "commitMessage", repository_url as "repositoryUrl", status
     `;
 
@@ -332,7 +431,7 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async getRelease(id: string): Promise<Release | null> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES} WHERE id = $1
@@ -344,7 +443,7 @@ export class PostgresDatabase implements DatabaseInterface {
 
   async listReleases(): Promise<Release[]> {
     const query = `
-      SELECT id, runtime_version as "runtimeVersion", path, (timestamp AT TIME ZONE 'UTC') AS timestamp,
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp,
              commit_hash as "commitHash", commit_message as "commitMessage", update_id as "updateId",
              repository_url as "repositoryUrl", status
       FROM ${Tables.RELEASES}

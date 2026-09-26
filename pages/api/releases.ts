@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import moment from 'moment';
 
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 import { StorageFactory } from '../../apiUtils/storage/StorageFactory';
@@ -29,7 +28,7 @@ export default async function releasesHandler(req: NextApiRequest, res: NextApiR
         id: release.id,
         path: release.path,
         runtimeVersion: release.runtimeVersion,
-        timestamp: moment(release.timestamp).utcOffset(60).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
+        timestamp: new Date(release.timestamp).toISOString(),
         size: filesByPath.get(release.path)?.metadata.size ?? 0,
         commitHash: release.commitHash,
         commitMessage: release.commitMessage,
