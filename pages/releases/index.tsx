@@ -1,65 +1,78 @@
-import { Box, Flex, IconButton, LinkBox, LinkOverlay, SimpleGrid, Text } from '@chakra-ui/react';
+import {
+  Box,
+  Button,
+  Flex,
+  IconButton,
+  Input,
+  InputGroup,
+  InputLeftElement,
+  Link,
+  Table,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+} from '@chakra-ui/react';
 import NextLink from 'next/link';
 import moment from 'moment';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FiArrowRight, FiRefreshCw } from 'react-icons/fi';
+import { useEffect, useState } from 'react';
+import { FiArrowRight, FiRefreshCw, FiSearch } from 'react-icons/fi';
 
 import CommitHash from '../../components/CommitHash';
 import Layout from '../../components/Layout';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import PageHeader from '../../components/PageHeader';
 import ProtectedRoute from '../../components/ProtectedRoute';
-import { Release } from '../../components/releases';
 
-interface RuntimeGroup {
+interface RuntimeSummary {
   version: string;
-  releases: Release[];
-  active?: Release;
-  latest: Release;
+  releaseCount: number;
+  latestPublishedAt: string;
+  activeCommitHash: string | null;
+  activeRepositoryUrl: string | null;
 }
 
+const PAGE_SIZE = 20;
+
 export default function ReleasesPage() {
-  const [releases, setReleases] = useState<Release[]>([]);
+  const [runtimes, setRuntimes] = useState<RuntimeSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const response = await fetch('/api/releases');
-      if (!response.ok) throw new Error('Failed to fetch releases');
-      const data = await response.json();
-      setReleases(data.releases);
-      setError(false);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const runtimes = useMemo(() => {
-    const groups = new Map<string, Release[]>();
-    for (const release of releases) {
-      const group = groups.get(release.runtimeVersion) ?? [];
-      group.push(release);
-      groups.set(release.runtimeVersion, group);
-    }
-    return Array.from(groups, ([version, group]): RuntimeGroup => {
-      group.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      return {
-        version,
-        releases: group,
-        active: group.find((release) => release.status === 'active'),
-        latest: group[0],
-      };
-    }).sort(
-      (a, b) => new Date(b.latest.timestamp).getTime() - new Date(a.latest.timestamp).getTime()
+    const controller = new AbortController();
+    const timer = setTimeout(
+      async () => {
+        setLoading(true);
+        try {
+          const query = new URLSearchParams({ search, page: String(page) });
+          const response = await fetch(`/api/runtimes?${query}`, { signal: controller.signal });
+          if (!response.ok) throw new Error('Failed to fetch runtimes');
+          const data = await response.json();
+          setRuntimes(data.runtimes);
+          setTotal(data.total);
+          setError(false);
+        } catch {
+          if (!controller.signal.aborted) setError(true);
+        } finally {
+          if (!controller.signal.aborted) setLoading(false);
+        }
+      },
+      search ? 250 : 0
     );
-  }, [releases]);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [search, page, refreshKey]);
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <ProtectedRoute>
@@ -69,7 +82,7 @@ export default function ReleasesPage() {
           actions={
             <IconButton
               aria-label="Refresh runtimes"
-              onClick={refresh}
+              onClick={() => setRefreshKey((key) => key + 1)}
               variant="solid"
               colorScheme="gray"
               size="sm"
@@ -78,7 +91,8 @@ export default function ReleasesPage() {
           }
         />
         <Text color="muted" mb={7}>
-          Each runtime has its own OTA history and live release.
+          Each runtime has its own OTA history and live release. A runtime appears after its first
+          OTA is published.
         </Text>
         {loading && <LoadingSpinner py={24} />}
         {error && (
@@ -86,7 +100,7 @@ export default function ReleasesPage() {
             Couldn&apos;t load runtime versions. Please refresh.
           </Text>
         )}
-        {!loading && !error && runtimes.length === 0 && (
+        {!loading && !error && total === 0 && !search && (
           <Box bg="panel" border="1px solid" borderColor="line" borderRadius="14px" p={8}>
             <Text fontWeight={600}>No runtime versions yet</Text>
             <Text color="muted" fontSize="sm" mt={1}>
@@ -94,83 +108,141 @@ export default function ReleasesPage() {
             </Text>
           </Box>
         )}
-        {!loading && !error && runtimes.length > 0 && (
-          <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={4}>
-            {runtimes.map((runtime) => (
-              <LinkBox
-                key={runtime.version}
-                bg="panel"
-                border="1px solid"
-                borderColor="line"
-                borderRadius="14px"
-                p={{ base: 5, md: 6 }}
-                transition="border-color .15s, background .15s"
-                _hover={{ borderColor: 'muted', bg: 'tray' }}>
-                <Flex align="start" justify="space-between" gap={4}>
-                  <Box>
-                    <Text
-                      color="muted"
-                      fontSize="xs"
-                      textTransform="uppercase"
-                      letterSpacing="wide">
-                      Runtime
-                    </Text>
-                    <LinkOverlay
-                      as={NextLink}
-                      href={`/releases/${encodeURIComponent(runtime.version)}`}>
-                      <Text fontFamily="mono" fontSize="2xl" fontWeight={600} mt={1}>
-                        {runtime.version}
-                      </Text>
-                    </LinkOverlay>
-                  </Box>
-                  <Flex
-                    align="center"
-                    gap={2}
-                    color={runtime.active ? 'verified.text' : 'muted'}
-                    fontSize="xs">
-                    {runtime.active && <Box boxSize="6px" borderRadius="full" bg="verified.dot" />}
-                    {runtime.active ? 'Live' : 'No live release'}
-                  </Flex>
+        {!error && (total > 0 || search) && (
+          <>
+            <Flex align="center" justify="space-between" gap={4} mb={4} wrap="wrap">
+              <Text color="muted" fontSize="sm">
+                {total} {total === 1 ? 'runtime' : 'runtimes'}
+              </Text>
+              <InputGroup w={{ base: 'full', sm: '18rem' }}>
+                <InputLeftElement pointerEvents="none" color="muted">
+                  <FiSearch />
+                </InputLeftElement>
+                <Input
+                  aria-label="Search runtime versions"
+                  placeholder="Search runtime versions"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setPage(1);
+                  }}
+                  bg="field"
+                  borderColor="line"
+                />
+              </InputGroup>
+            </Flex>
+            <Box
+              bg="panel"
+              border="1px solid"
+              borderColor="line"
+              borderRadius="14px"
+              overflowX="auto">
+              <Table variant="simple">
+                <Thead>
+                  <Tr>
+                    <Th>Runtime</Th>
+                    <Th isNumeric>OTA releases</Th>
+                    <Th>Live OTA</Th>
+                    <Th>Last published</Th>
+                    <Th>Status</Th>
+                    <Th />
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {runtimes.map((runtime) => (
+                    <Tr
+                      key={runtime.version}
+                      _hover={{ bg: 'tray' }}
+                      _last={{ td: { borderBottom: 'none' } }}>
+                      <Td>
+                        <Link
+                          as={NextLink}
+                          href={`/releases/${encodeURIComponent(runtime.version)}`}
+                          fontFamily="mono"
+                          fontWeight={600}>
+                          {runtime.version}
+                        </Link>
+                      </Td>
+                      <Td isNumeric fontFamily="mono">
+                        {runtime.releaseCount}
+                      </Td>
+                      <Td>
+                        {runtime.activeCommitHash ? (
+                          <CommitHash
+                            hash={runtime.activeCommitHash}
+                            repositoryUrl={runtime.activeRepositoryUrl}
+                            fontFamily="mono"
+                            fontSize="sm"
+                          />
+                        ) : (
+                          <Text color="muted">—</Text>
+                        )}
+                      </Td>
+                      <Td whiteSpace="nowrap" color="muted">
+                        {moment(runtime.latestPublishedAt)
+                          .utcOffset(60)
+                          .format('MMM D, YYYY HH:mm')}
+                      </Td>
+                      <Td>
+                        <Flex
+                          align="center"
+                          gap={2}
+                          color={runtime.activeCommitHash ? 'verified.text' : 'muted'}
+                          fontSize="sm"
+                          whiteSpace="nowrap">
+                          {runtime.activeCommitHash && (
+                            <Box boxSize="6px" borderRadius="full" bg="verified.dot" />
+                          )}
+                          {runtime.activeCommitHash ? 'Live' : 'No live OTA'}
+                        </Flex>
+                      </Td>
+                      <Td textAlign="right">
+                        <Link
+                          as={NextLink}
+                          href={`/releases/${encodeURIComponent(runtime.version)}`}
+                          color="muted"
+                          display="inline-flex"
+                          alignItems="center"
+                          gap={2}
+                          fontSize="sm"
+                          whiteSpace="nowrap">
+                          View OTAs <FiArrowRight />
+                        </Link>
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+              {!loading && total === 0 && (
+                <Text color="muted" py={10} textAlign="center">
+                  No runtimes match “{search}”.
+                </Text>
+              )}
+            </Box>
+            {pageCount > 1 && (
+              <Flex justify="space-between" align="center" mt={4} gap={4}>
+                <Text color="muted" fontSize="sm">
+                  Page {page} of {pageCount}
+                </Text>
+                <Flex gap={2}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    isDisabled={page === 1}
+                    onClick={() => setPage(page - 1)}>
+                    Previous
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    isDisabled={page === pageCount}
+                    onClick={() => setPage(page + 1)}>
+                    Next
+                  </Button>
                 </Flex>
-                <Flex mt={5} pt={4} borderTop="1px solid" borderColor="line" gap={8} wrap="wrap">
-                  <Box>
-                    <Text color="muted" fontSize="xs">
-                      OTA releases
-                    </Text>
-                    <Text fontFamily="mono" mt={1}>
-                      {runtime.releases.length}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text color="muted" fontSize="xs">
-                      Live commit
-                    </Text>
-                    <Box mt={1} fontFamily="mono" fontSize="sm">
-                      {runtime.active ? (
-                        <CommitHash
-                          hash={runtime.active.commitHash}
-                          repositoryUrl={runtime.active.repositoryUrl}
-                        />
-                      ) : (
-                        '—'
-                      )}
-                    </Box>
-                  </Box>
-                  <Box>
-                    <Text color="muted" fontSize="xs">
-                      Last published
-                    </Text>
-                    <Text mt={1} fontSize="sm">
-                      {moment(runtime.latest.timestamp).utcOffset(60).format('MMM D, YYYY HH:mm')}
-                    </Text>
-                  </Box>
-                </Flex>
-                <Flex mt={5} color="muted" align="center" gap={2} fontSize="sm">
-                  View OTA history <FiArrowRight />
-                </Flex>
-              </LinkBox>
-            ))}
-          </SimpleGrid>
+              </Flex>
+            )}
+          </>
         )}
       </Layout>
     </ProtectedRoute>

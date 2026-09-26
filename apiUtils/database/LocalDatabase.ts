@@ -265,6 +265,49 @@ export class PostgresDatabase implements DatabaseInterface {
     };
   }
 
+  async listRuntimeSummaries(
+    search: string,
+    limit: number,
+    offset: number
+  ): Promise<{
+    runtimes: {
+      version: string;
+      releaseCount: number;
+      latestPublishedAt: Date;
+      activeCommitHash: string | null;
+      activeRepositoryUrl: string | null;
+    }[];
+    total: number;
+  }> {
+    const filter = `status IN ('active', 'inactive')
+      AND POSITION(lower($1) IN lower(runtime_version)) > 0`;
+    const [list, count] = await Promise.all([
+      this.pool.query(
+        `WITH published AS (
+           SELECT runtime_version AS version, COUNT(*)::int AS "releaseCount",
+                  MAX(timestamp) AT TIME ZONE 'UTC' AS "latestPublishedAt"
+           FROM ${Tables.RELEASES}
+           WHERE ${filter}
+           GROUP BY runtime_version
+         )
+         SELECT published.*, active.commit_hash AS "activeCommitHash",
+                active.repository_url AS "activeRepositoryUrl"
+         FROM published
+         LEFT JOIN ${Tables.RELEASES} active
+           ON active.runtime_version = published.version AND active.status = 'active'
+         ORDER BY published."latestPublishedAt" DESC, published.version DESC
+         LIMIT $2 OFFSET $3`,
+        [search, limit, offset]
+      ),
+      this.pool.query(
+        `SELECT COUNT(DISTINCT runtime_version)::int AS total
+         FROM ${Tables.RELEASES} WHERE ${filter}`,
+        [search]
+      ),
+    ]);
+    return { runtimes: list.rows, total: count.rows[0].total };
+  }
+
   async createRelease(release: Omit<Release, 'id'>): Promise<Release> {
     const query = `
       INSERT INTO ${Tables.RELEASES} (runtime_version, path, timestamp, commit_hash, commit_message, update_id, repository_url, status)

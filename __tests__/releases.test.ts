@@ -94,6 +94,41 @@ describe('Releases API', () => {
     expect(releases).toEqual([]);
   });
 
+  it('shows a newly published runtime even when its archive is absent from local storage', async () => {
+    (StorageFactory.getStorage as jest.Mock).mockReturnValue({
+      listDirectories: jest.fn().mockResolvedValue([]),
+    });
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({
+      listReleases: jest.fn().mockResolvedValue([
+        {
+          id: 'release-112',
+          path: 'updates/1.1.2/new.zip',
+          runtimeVersion: '1.1.2',
+          timestamp: '2026-09-26T09:00:00Z',
+          updateId: 'update-112',
+          status: 'active',
+        },
+        {
+          id: 'release-120',
+          path: 'updates/1.2.0/current.zip',
+          runtimeVersion: '1.2.0',
+          timestamp: '2026-09-25T09:00:00Z',
+          updateId: 'update-120',
+          status: 'active',
+        },
+      ]),
+    });
+
+    const { req, res } = createMocks({ method: 'GET' });
+    await releasesHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(JSON.parse(res._getData()).releases).toEqual([
+      expect.objectContaining({ runtimeVersion: '1.1.2', status: 'active', archiveAvailable: false }),
+      expect.objectContaining({ runtimeVersion: '1.2.0', status: 'active', archiveAvailable: false }),
+    ]);
+  });
+
   it('should handle errors gracefully', async () => {
     const mockStorage = {
       listDirectories: jest.fn().mockRejectedValue(new Error('Storage error')),
