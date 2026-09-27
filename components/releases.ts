@@ -23,6 +23,11 @@ export interface ReleasePublication {
   rolledBackFromRepositoryUrl: string | null;
 }
 
+// Orders runtime versions numerically, highest first ("1.10.0" before "1.2.0").
+export function compareRuntimeVersionsDesc(a: string, b: string): number {
+  return b.localeCompare(a, undefined, { numeric: true });
+}
+
 // The update ID phones are offered when this release is Live.
 export function servedUpdateId(release: Release): string | null {
   return release.publications[0]?.updateId ?? release.updateId;

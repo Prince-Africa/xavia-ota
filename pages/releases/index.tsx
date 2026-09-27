@@ -139,7 +139,6 @@ export default function ReleasesPage() {
                     <Th isNumeric>OTA releases</Th>
                     <Th>Live OTA</Th>
                     <Th>Last published</Th>
-                    <Th>Status</Th>
                     <Th />
                   </Tr>
                 </Thead>
@@ -175,19 +174,6 @@ export default function ReleasesPage() {
                       </Td>
                       <Td whiteSpace="nowrap" color="muted">
                         {formatWatTimestamp(runtime.latestPublishedAt)}
-                      </Td>
-                      <Td>
-                        <Flex
-                          align="center"
-                          gap={2}
-                          color={runtime.activeCommitHash ? 'verified.text' : 'muted'}
-                          fontSize="sm"
-                          whiteSpace="nowrap">
-                          {runtime.activeCommitHash && (
-                            <Box boxSize="6px" borderRadius="full" bg="verified.dot" />
-                          )}
-                          {runtime.activeCommitHash ? 'Live' : 'No live OTA'}
-                        </Flex>
                       </Td>
                       <Td textAlign="right">
                         <Link

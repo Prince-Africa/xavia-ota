@@ -31,6 +31,17 @@ describe('runtime summary list', () => {
     );
   });
 
+  it('orders runtimes by version, highest first, not by last push', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ total: 0 }] });
+    (Pool as unknown as jest.Mock).mockImplementation(() => ({ query }));
+
+    await new PostgresDatabase().listRuntimeSummaries('', 20, 0);
+
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("string_to_array(published.version, '.')::numeric[] END DESC");
+    expect(sql).not.toContain('"latestPublishedAt" DESC');
+  });
+
   it('returns a page of runtime summaries', async () => {
     const listRuntimeSummaries = jest.fn().mockResolvedValue({
       runtimes: [{ version: '1.1.2', releaseCount: 1 }],

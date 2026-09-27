@@ -458,7 +458,9 @@ export class PostgresDatabase implements DatabaseInterface {
          FROM published
          LEFT JOIN ${Tables.RELEASES} active
            ON active.runtime_version = published.version AND active.status = 'active'
-         ORDER BY published."latestPublishedAt" DESC, published.version DESC
+         ORDER BY CASE WHEN published.version ~ '^[0-9]+([.][0-9]+)*$'
+                       THEN string_to_array(published.version, '.')::numeric[] END DESC NULLS LAST,
+                  published.version DESC
          LIMIT $2 OFFSET $3`,
         [search, limit, offset]
       ),
