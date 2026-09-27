@@ -25,7 +25,12 @@ import Layout from '../components/Layout';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PageHeader from '../components/PageHeader';
 import ProtectedRoute from '../components/ProtectedRoute';
-import { formatFileSize, Release, servedUpdateId } from '../components/releases';
+import {
+  compareRuntimeVersionsDesc,
+  formatFileSize,
+  Release,
+  servedUpdateId,
+} from '../components/releases';
 import { formatWatTimestamp } from '../components/time';
 
 const pulse = keyframes`
@@ -65,7 +70,11 @@ export default function Dashboard() {
       );
 
       const releases: Release[] = releasesData.releases ?? [];
-      setActiveReleases(releases.filter((release) => release.status === 'active'));
+      setActiveReleases(
+        releases
+          .filter((release) => release.status === 'active')
+          .sort((a, b) => compareRuntimeVersionsDesc(a.runtimeVersion, b.runtimeVersion))
+      );
       setUniqueInstallations(data.uniqueInstallations);
       setIosInstallations(data.iosInstallations);
       setAndroidInstallations(data.androidInstallations);
@@ -105,11 +114,9 @@ export default function Dashboard() {
       detail: 'Unique installations offered an OTA this month.',
     },
   ];
-  const latestRelease = activeReleases.reduce<Release | null>(
-    (latest, release) =>
-      !latest || new Date(release.timestamp) > new Date(latest.timestamp) ? release : latest,
-    null
-  );
+  // The highest runtime is the one current app builds use, even if an older runtime was pushed
+  // to more recently.
+  const latestRelease = activeReleases[0] ?? null;
 
   return (
     <ProtectedRoute>
