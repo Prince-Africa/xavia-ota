@@ -1,4 +1,3 @@
-import mime from 'mime';
 import moment from 'moment';
 
 import { HashHelper } from './HashHelper';
@@ -6,26 +5,6 @@ import { ZipHelper } from './ZipHelper';
 import { DatabaseFactory } from '../database/DatabaseFactory';
 
 export class NoUpdateAvailableError extends Error {}
-export type GetAssetMetadataArg =
-  | {
-      updateBundlePath: string;
-      filePath: string;
-      ext: null;
-      isLaunchAsset: true;
-      runtimeVersion: string;
-      updateId: string;
-      platform: string;
-    }
-  | {
-      updateBundlePath: string;
-      filePath: string;
-      ext: string;
-      isLaunchAsset: false;
-      runtimeVersion: string;
-      updateId: string;
-      platform: string;
-    };
-
 export class UpdateHelper {
   // Bundles are named by their UTC publish time (YYYYMMDDHHmmss.zip), and that name is what
   // decides which update devices receive. File creation times are unreliable (Linux volumes
@@ -43,30 +22,6 @@ export class UpdateHelper {
     );
     if (!release) throw new NoUpdateAvailableError();
     return release.path.replace(/\.zip$/, '');
-  }
-
-  static async getAssetMetadataAsync(arg: GetAssetMetadataArg) {
-    const zip = await ZipHelper.getZipFromStorage(arg.updateBundlePath);
-    const asset = await ZipHelper.getFileFromZip(zip, arg.filePath);
-
-    const assetHash = HashHelper.getBase64URLEncoding(
-      HashHelper.createHash(asset, 'sha256', 'base64')
-    );
-    const key = HashHelper.createHash(asset, 'md5', 'hex');
-    const keyExtensionSuffix = arg.isLaunchAsset ? 'bundle' : arg.ext;
-    const contentType = arg.isLaunchAsset ? 'application/javascript' : mime.getType(arg.ext);
-
-    return {
-      hash: assetHash,
-      key,
-      fileExtension: `.${keyExtensionSuffix}`,
-      contentType,
-      url: `${process.env.HOST}/api/assets?asset=${encodeURIComponent(
-        arg.filePath
-      )}&runtimeVersion=${encodeURIComponent(arg.runtimeVersion)}&updateId=${encodeURIComponent(
-        arg.updateId
-      )}&platform=${arg.platform}`,
-    };
   }
 
   static async getMetadataAsync({

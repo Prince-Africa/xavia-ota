@@ -34,6 +34,17 @@ Husky hooks may not run on every machine, so run these yourself before pushing:
 - Commit messages follow Conventional Commits and are checked by commitlint; body lines must be
   100 characters or fewer (`npx commitlint --from HEAD~1 --to HEAD`).
 
+## Update delivery
+
+- Phones must not pay for unzipping or hashing. `apiUtils/helpers/ReleaseAssetCache.ts` works out
+  each release's asset hashes, keys and Expo config once (at upload, or on first request after a
+  restart), and unpacks each asset plus a gzip copy to `ASSET_CACHE_DIR`. `/api/manifest` and
+  `/api/assets` read from that cache; keep new per-request work out of the zip.
+- Asset responses are `Cache-Control: public, max-age=31536000, immutable`: a URL names one
+  update's copy of a content-hashed file. A shared cache or CDN in front would stop those requests
+  reaching `recordAssetRequest`, so the dashboard's asset counters would undercount.
+- `DatabaseFactory.getDatabase()` returns one shared instance; it owns the Postgres pool.
+
 ## Admin portal UI
 
 - Dark-only item7go brand theme. Colour tokens (surfaces, `line`, `muted`, brand red `primary`,
