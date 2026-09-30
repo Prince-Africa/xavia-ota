@@ -2,10 +2,10 @@ import AdmZip from 'adm-zip';
 import { createMocks } from 'node-mocks-http';
 import FormData from 'form-data';
 
-import { ConfigHelper } from '../apiUtils/helpers/ConfigHelper';
 import { UpdateHelper, NoUpdateAvailableError } from '../apiUtils/helpers/UpdateHelper';
 import { ZipHelper } from '../apiUtils/helpers/ZipHelper';
 import { HashHelper } from '../apiUtils/helpers/HashHelper';
+import { PreparedRelease, ReleaseAssetCache } from '../apiUtils/helpers/ReleaseAssetCache';
 import manifestEndpoint from '../pages/api/manifest';
 import { DatabaseFactory } from '../apiUtils/database/DatabaseFactory';
 import { DatabaseInterface, Release } from '../apiUtils/database/DatabaseInterface';
@@ -14,8 +14,34 @@ jest.mock('../apiUtils/helpers/UpdateHelper');
 jest.mock('../apiUtils/helpers/ZipHelper');
 jest.mock('../apiUtils/helpers/ConfigHelper');
 jest.mock('../apiUtils/helpers/HashHelper');
+jest.mock('../apiUtils/helpers/ReleaseAssetCache');
 jest.mock('../apiUtils/database/DatabaseFactory');
 jest.mock('form-data');
+
+function preparedAsset(path: string, key: string, ext: string | null) {
+  return {
+    path,
+    hash: `${key}-hash`,
+    key,
+    fileExtension: `.${ext ?? 'bundle'}`,
+    contentType: ext === null ? 'application/javascript' : 'image/png',
+    size: 4,
+    gzipSize: null,
+  };
+}
+
+function preparedRelease(): PreparedRelease {
+  return {
+    isRollback: false,
+    expoConfig: { name: 'item7go' },
+    platforms: {
+      ios: {
+        launchAsset: preparedAsset('bundle.js', 'bundle-key', null),
+        assets: [preparedAsset('assets/image', 'key', 'png')],
+      },
+    },
+  };
+}
 
 describe('Manifest API', () => {
   beforeEach(() => {
@@ -220,22 +246,7 @@ describe('Manifest API', () => {
       'path/to/update'
     );
     (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue(mockMetadata);
-    (UpdateHelper.getAssetMetadataAsync as jest.Mock).mockResolvedValue({
-      hash: 'hash',
-      key: 'key',
-      fileExtension: '.ext',
-      contentType: 'contentType',
-      url: 'url',
-    });
-
-    // Mock ConfigHelper
-    (ConfigHelper.getExpoConfigAsync as jest.Mock).mockResolvedValue({});
-
-    // Mock ZipHelper
-    const mockZip = {
-      getEntry: jest.fn().mockReturnValue(null),
-    };
-    (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue(mockZip as unknown as AdmZip);
+    (ReleaseAssetCache.getPreparedRelease as jest.Mock).mockResolvedValue(preparedRelease());
 
     // Mock FormData
     const mockFormData = {
@@ -294,6 +305,52 @@ describe('Manifest API', () => {
       mockFormData.append.mock.calls.find(([name]) => name === 'extensions')![1]
     );
     expect(extensions.assetRequestHeaders.key['x-installation-id']).toBe(assignedId);
+    expect(ZipHelper.getZipFromStorage).not.toHaveBeenCalled();
+
+    const manifest = JSON.parse(
+      mockFormData.append.mock.calls.find(([name]) => name === 'manifest')![1]
+    );
+    expect(manifest.launchAsset).toEqual({
+      hash: 'bundle-key-hash',
+      key: 'bundle-key',
+      fileExtension: '.bundle',
+      contentType: 'application/javascript',
+      url: `${process.env.HOST}/api/assets?asset=bundle.js&runtimeVersion=1.0.0&updateId=different-update-id&platform=ios`,
+    });
+    expect(manifest.assets).toEqual([
+      {
+        hash: 'key-hash',
+        key: 'key',
+        fileExtension: '.png',
+        contentType: 'image/png',
+        url: `${process.env.HOST}/api/assets?asset=assets%2Fimage&runtimeVersion=1.0.0&updateId=different-update-id&platform=ios`,
+      },
+    ]);
+    expect(manifest.extra).toEqual({ expoClient: { name: 'item7go' } });
+  });
+
+  it('returns 404 when the update has no bundle for the platform', async () => {
+    (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue({
+      getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue({
+        id: 'release-id',
+        path: 'updates/1.0.0/update.zip',
+        updateId: 'update-id',
+      }),
+      recordManifestRequest: jest.fn(),
+    });
+    (ReleaseAssetCache.getPreparedRelease as jest.Mock).mockResolvedValue(preparedRelease());
+    const { req, res } = createMocks({
+      method: 'GET',
+      headers: {
+        'expo-platform': 'android',
+        'expo-runtime-version': '1.0.0',
+        'expo-protocol-version': '1',
+      },
+    });
+
+    await manifestEndpoint(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
   });
 
   describe('a rolled-back release', () => {
@@ -318,19 +375,10 @@ describe('Manifest API', () => {
         setReleaseUpdateId: jest.fn(),
       };
       (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
-      (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue({
-        getEntry: jest.fn().mockReturnValue(null),
-      });
-      (UpdateHelper.getMetadataAsync as jest.Mock).mockResolvedValue({
-        metadataJson: { fileMetadata: { ios: { assets: [], bundle: 'bundle.js' } } },
-        createdAt: '2099-01-01T00:00:00.000Z',
-        id: 'metadata-hash',
-      });
-      (UpdateHelper.getAssetMetadataAsync as jest.Mock).mockResolvedValue({ key: 'bundle-key' });
+      (ReleaseAssetCache.getPreparedRelease as jest.Mock).mockResolvedValue(preparedRelease());
       (UpdateHelper.createNoUpdateAvailableDirectiveAsync as jest.Mock).mockResolvedValue({
         type: 'noUpdateAvailable',
       });
-      (ConfigHelper.getExpoConfigAsync as jest.Mock).mockResolvedValue({});
       const mockFormData = {
         append: jest.fn(),
         getBoundary: jest.fn().mockReturnValue('boundary'),
@@ -364,10 +412,8 @@ describe('Manifest API', () => {
       );
       expect(manifest.id).toBe('rollback-publication-id');
       expect(manifest.createdAt).toBe('2026-09-27T10:30:00.000Z');
-      expect(UpdateHelper.getAssetMetadataAsync).toHaveBeenCalledWith(
-        expect.objectContaining({ updateId: 'rollback-publication-id' })
-      );
-      expect(ZipHelper.getZipFromStorage).toHaveBeenCalledWith('updates/1.0.0/target');
+      expect(manifest.launchAsset.url).toContain('updateId=rollback-publication-id');
+      expect(ReleaseAssetCache.getPreparedRelease).toHaveBeenCalledWith(rolledBack);
       expect(mockDatabase.recordManifestRequest).toHaveBeenCalledWith('target-release-id', 'ios');
       expect(mockDatabase.setReleaseUpdateId).not.toHaveBeenCalled();
     });
@@ -425,11 +471,11 @@ describe('Manifest API', () => {
       },
     });
 
-    // Mock ZipHelper to indicate rollback
-    const mockZip = {
-      getEntry: jest.fn().mockReturnValue({ name: 'rollback' }), // Return non-null to indicate rollback
-    };
-    (ZipHelper.getZipFromStorage as jest.Mock).mockResolvedValue(mockZip as unknown as AdmZip);
+    (ReleaseAssetCache.getPreparedRelease as jest.Mock).mockResolvedValue({
+      isRollback: true,
+      expoConfig: null,
+      platforms: {},
+    });
 
     // Mock FormData
     const mockFormData = {

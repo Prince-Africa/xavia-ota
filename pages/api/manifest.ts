@@ -7,8 +7,12 @@ import { serializeDictionary } from 'structured-headers';
 import { ConfigHelper } from '../../apiUtils/helpers/ConfigHelper';
 import { DictionaryHelper } from '../../apiUtils/helpers/DictionaryHelper';
 import { HashHelper } from '../../apiUtils/helpers/HashHelper';
+import {
+  PreparedAsset,
+  PreparedRelease,
+  ReleaseAssetCache,
+} from '../../apiUtils/helpers/ReleaseAssetCache';
 import { UpdateHelper, NoUpdateAvailableError } from '../../apiUtils/helpers/UpdateHelper';
-import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 import { getLogger } from '../../apiUtils/logger';
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 
@@ -122,16 +126,15 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
     return;
   }
 
-  const updateType = await getTypeOfUpdateAsync(updateBundlePath);
-
   try {
     try {
-      if (updateType === UpdateType.NORMAL_UPDATE) {
+      const prepared = await ReleaseAssetCache.getPreparedRelease(releaseRecord);
+      if (!prepared.isRollback) {
         logger.info('Found a normal update available.');
         await putUpdateInResponseAsync(
           req,
           res,
-          updateBundlePath,
+          prepared,
           runtimeVersion,
           platform,
           protocolVersion,
@@ -140,7 +143,7 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
           updateId,
           createdAt
         );
-      } else if (updateType === UpdateType.ROLLBACK) {
+      } else {
         logger.info('Rollback is available.');
         await putRollBackInResponseAsync(req, res, updateBundlePath, protocolVersion);
         if (res.statusCode === 200) await countManifestRequest(releaseRecord.id, platform);
@@ -161,21 +164,29 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
   }
 }
 
-enum UpdateType {
-  NORMAL_UPDATE,
-  ROLLBACK,
-}
-
-async function getTypeOfUpdateAsync(updateBundlePath: string): Promise<UpdateType> {
-  const zip = await ZipHelper.getZipFromStorage(updateBundlePath);
-  const hasRollback = zip.getEntry('rollback') !== null;
-  return hasRollback ? UpdateType.ROLLBACK : UpdateType.NORMAL_UPDATE;
+function toManifestAsset(
+  asset: PreparedAsset,
+  runtimeVersion: string,
+  updateId: string,
+  platform: string
+) {
+  return {
+    hash: asset.hash,
+    key: asset.key,
+    fileExtension: asset.fileExtension,
+    contentType: asset.contentType,
+    url: `${process.env.HOST}/api/assets?asset=${encodeURIComponent(
+      asset.path
+    )}&runtimeVersion=${encodeURIComponent(runtimeVersion)}&updateId=${encodeURIComponent(
+      updateId
+    )}&platform=${platform}`,
+  };
 }
 
 async function putUpdateInResponseAsync(
   req: NextApiRequest,
   res: NextApiResponse,
-  updateBundlePath: string,
+  prepared: PreparedRelease,
   runtimeVersion: string,
   platform: string,
   protocolVersion: number,
@@ -185,10 +196,6 @@ async function putUpdateInResponseAsync(
   createdAt: string
 ): Promise<void> {
   const currentUpdateId = req.headers['expo-current-update-id'];
-  const { metadataJson } = await UpdateHelper.getMetadataAsync({
-    updateBundlePath,
-    runtimeVersion,
-  });
 
   // NoUpdateAvailable directive only supported on protocol version 1
   // for protocol version 0, serve most recent update as normal
@@ -197,40 +204,21 @@ async function putUpdateInResponseAsync(
     throw new NoUpdateAvailableError();
   }
 
-  const expoConfig = await ConfigHelper.getExpoConfigAsync({
-    updateBundlePath,
-    runtimeVersion,
-  });
-  const platformSpecificMetadata = metadataJson.fileMetadata[platform];
+  const platformAssets = prepared.platforms[platform];
+  if (!platformAssets) {
+    throw new Error(`No ${platform} bundle in update ${updateId}`);
+  }
   const manifest = {
     id: updateId,
     createdAt,
     runtimeVersion,
-    assets: await Promise.all(
-      (platformSpecificMetadata.assets as any[]).map((asset: any) =>
-        UpdateHelper.getAssetMetadataAsync({
-          updateBundlePath,
-          filePath: asset.path,
-          ext: asset.ext,
-          runtimeVersion,
-          updateId,
-          platform,
-          isLaunchAsset: false,
-        })
-      )
+    assets: platformAssets.assets.map((asset) =>
+      toManifestAsset(asset, runtimeVersion, updateId, platform)
     ),
-    launchAsset: await UpdateHelper.getAssetMetadataAsync({
-      updateBundlePath,
-      filePath: platformSpecificMetadata.bundle,
-      isLaunchAsset: true,
-      runtimeVersion,
-      updateId,
-      platform,
-      ext: null,
-    }),
+    launchAsset: toManifestAsset(platformAssets.launchAsset, runtimeVersion, updateId, platform),
     metadata: {},
     extra: {
-      expoClient: expoConfig,
+      expoClient: prepared.expoConfig,
     },
   };
 

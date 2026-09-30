@@ -9,6 +9,7 @@ import AdmZip from 'adm-zip';
 import { randomUUID } from 'crypto';
 import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 import { HashHelper } from '../../apiUtils/helpers/HashHelper';
+import { ReleaseAssetCache } from '../../apiUtils/helpers/ReleaseAssetCache';
 import { RepositoryHelper } from '../../apiUtils/helpers/RepositoryHelper';
 
 export const config = {
@@ -93,6 +94,9 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
     }
 
     try {
+      // Hash and unpack the assets now so the first phone gets them from the cache, and a bundle
+      // phones could not use fails here instead of going live.
+      await ReleaseAssetCache.prepareFromZip(release.id, zipFolder);
       await StorageFactory.getStorage().uploadFile(release.path, zipContent);
       await database.activateRelease(release.id);
     } catch (error) {
