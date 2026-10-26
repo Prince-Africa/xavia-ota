@@ -4,6 +4,14 @@ import { pipeline } from 'stream/promises';
 import { ReleaseAssetCache } from '../../apiUtils/helpers/ReleaseAssetCache';
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 
+// JS bundles are several MB and are streamed from disk, so Next's 4 MB "API response exceeds" warning
+// fires on every bundle download without pointing at a problem.
+export const config = {
+  api: {
+    responseLimit: false,
+  },
+};
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function acceptsGzip(header: string | string[] | undefined): boolean {
