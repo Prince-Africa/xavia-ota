@@ -24,6 +24,7 @@ describe('tracking summary', () => {
           downloadAttempts: '3',
           assetRequests: '4',
           bytesTransferred: '1200',
+          failedLaunches: '1',
         },
       ],
     });
@@ -38,8 +39,10 @@ describe('tracking summary', () => {
         downloadAttempts: 3,
         assetRequests: 4,
         bytesTransferred: 1200,
+        failedLaunches: 1,
       })
     );
+    expect(query.mock.calls[0][0]).toContain('release_failed_launches');
     expect(query.mock.calls[0][0]).toContain('COUNT(DISTINCT installation_id)');
     expect(query.mock.calls[0][0]).toContain('offered_release = TRUE');
     expect(query.mock.calls[0][0]).toContain('r.runtime_version AS "runtimeVersion"');
@@ -105,5 +108,29 @@ describe('tracking summary', () => {
     ]);
     expect(query.mock.calls[1][0]).toContain('release_download_attempts');
     expect(query.mock.calls[1][0]).toContain('bytes_transferred');
+  });
+
+  it('records failed launches against the release or publication with that update ID', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    (Pool as unknown as jest.Mock).mockImplementation(() => ({ query }));
+
+    await new PostgresDatabase().recordFailedLaunches(
+      '1.2.1',
+      'ios',
+      '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+      ['1946c03e-45ab-ed25-6d68-ab125acdc059']
+    );
+
+    expect(query.mock.calls[0][0]).toContain('INSERT INTO release_failed_launches');
+    expect(query.mock.calls[0][0]).toContain('release_publications');
+    expect(query.mock.calls[0][0]).toContain(
+      'ON CONFLICT (release_id, installation_id) DO NOTHING'
+    );
+    expect(query.mock.calls[0][1]).toEqual([
+      '1.2.1',
+      'ios',
+      '576634c0-6482-4c50-8c60-169f7ac9b7b8',
+      ['1946c03e-45ab-ed25-6d68-ab125acdc059'],
+    ]);
   });
 });

@@ -158,6 +158,86 @@ describe('Manifest API', () => {
     expect(mockDatabase.recordManifestRequest).toHaveBeenCalledWith('release-id', 'ios');
   });
 
+  describe('failed launches', () => {
+    const installationId = '576634c0-6482-4c50-8c60-169f7ac9b7b8';
+    let mockDatabase: Record<string, jest.Mock>;
+
+    beforeEach(() => {
+      mockDatabase = {
+        getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue(null),
+        recordFailedLaunches: jest.fn(),
+      };
+      (DatabaseFactory.getDatabase as jest.Mock).mockReturnValue(mockDatabase);
+      (UpdateHelper.createNoUpdateAvailableDirectiveAsync as jest.Mock).mockResolvedValue({
+        type: 'noUpdateAvailable',
+      });
+      (FormData as unknown as jest.Mock).mockImplementation(() => ({
+        append: jest.fn(),
+        getBoundary: jest.fn().mockReturnValue('boundary'),
+        getBuffer: jest.fn().mockReturnValue(Buffer.from('mock-form-data')),
+      }));
+    });
+
+    function request(headers: Record<string, string>) {
+      return createMocks({
+        method: 'GET',
+        headers: {
+          'expo-platform': 'android',
+          'expo-runtime-version': '1.2.1',
+          'expo-protocol-version': '1',
+          ...headers,
+        },
+      });
+    }
+
+    it('records updates the phone reports as failed to launch', async () => {
+      const { req, res } = request({
+        'x-installation-id': installationId,
+        'expo-recent-failed-update-ids':
+          '"1946C03E-45AB-ED25-6D68-AB125ACDC059", "not-an-id", "4cdc655c-45ab-ed25-6d68-ab125acdc059"',
+      });
+
+      await manifestEndpoint(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockDatabase.recordFailedLaunches).toHaveBeenCalledWith(
+        '1.2.1',
+        'android',
+        installationId,
+        ['1946c03e-45ab-ed25-6d68-ab125acdc059', '4cdc655c-45ab-ed25-6d68-ab125acdc059']
+      );
+    });
+
+    it('ignores the header without a confirmed installation or when it cannot be parsed', async () => {
+      const unconfirmed = request({
+        'expo-recent-failed-update-ids': '"1946c03e-45ab-ed25-6d68-ab125acdc059"',
+      });
+      await manifestEndpoint(unconfirmed.req, unconfirmed.res);
+
+      const malformed = request({
+        'x-installation-id': installationId,
+        'expo-recent-failed-update-ids': '("unterminated',
+      });
+      await manifestEndpoint(malformed.req, malformed.res);
+
+      expect(unconfirmed.res._getStatusCode()).toBe(200);
+      expect(malformed.res._getStatusCode()).toBe(200);
+      expect(mockDatabase.recordFailedLaunches).not.toHaveBeenCalled();
+    });
+
+    it('still answers the phone when recording fails', async () => {
+      mockDatabase.recordFailedLaunches.mockRejectedValue(new Error('database down'));
+      const { req, res } = request({
+        'x-installation-id': installationId,
+        'expo-recent-failed-update-ids': '"1946c03e-45ab-ed25-6d68-ab125acdc059"',
+      });
+
+      await manifestEndpoint(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+    });
+  });
+
   it('should look for an update when the request and release have no update ID', async () => {
     const mockDatabase = {
       getLatestReleaseRecordForRuntimeVersion: jest.fn().mockResolvedValue({

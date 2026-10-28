@@ -293,6 +293,29 @@ export class PostgresDatabase implements DatabaseInterface {
     );
   }
 
+  // Update IDs come from Expo-Recent-Failed-Update-IDs; each may be a release's own ID or any
+  // publication of it. IDs this server never served are ignored.
+  async recordFailedLaunches(
+    runtimeVersion: string,
+    platform: string,
+    installationId: string,
+    updateIds: string[]
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO release_failed_launches (release_id, installation_id, platform)
+       SELECT r.id, $3::uuid, $2
+       FROM ${Tables.RELEASES} r
+       WHERE r.runtime_version = $1 AND (
+         r.update_id = ANY($4::text[]) OR EXISTS (
+           SELECT 1 FROM ${Tables.RELEASE_PUBLICATIONS} p
+           WHERE p.release_id = r.id AND p.runtime_version = $1 AND p.update_id = ANY($4::text[])
+         )
+       )
+       ON CONFLICT (release_id, installation_id) DO NOTHING`,
+      [runtimeVersion, platform, installationId, updateIds]
+    );
+  }
+
   async getReleaseTrackingMetrics(releaseId: string): Promise<TrackingMetrics[]> {
     const query = `
       SELECT platform, COUNT(DISTINCT installation_id) as count
@@ -371,6 +394,7 @@ export class PostgresDatabase implements DatabaseInterface {
       downloadAttempts: number;
       assetRequests: number;
       bytesTransferred: number;
+      failedLaunches: number;
     }[]
   > {
     const { rows } = await this.pool.query(
@@ -382,7 +406,8 @@ export class PostgresDatabase implements DatabaseInterface {
              COALESCE(metrics.manifest_requests, 0) AS "manifestRequests",
              COALESCE(metrics.download_attempts, 0) AS "downloadAttempts",
              COALESCE(metrics.asset_requests, 0) AS "assetRequests",
-             COALESCE(metrics.bytes_transferred, 0) AS "bytesTransferred"
+             COALESCE(metrics.bytes_transferred, 0) AS "bytesTransferred",
+             COALESCE(failed.count, 0) AS "failedLaunches"
       FROM ${Tables.RELEASES} r
       CROSS JOIN (VALUES ('ios'), ('android')) AS platforms(platform)
       LEFT JOIN (
@@ -393,6 +418,11 @@ export class PostgresDatabase implements DatabaseInterface {
       ) installs ON installs.release_id = r.id AND installs.platform = platforms.platform
       LEFT JOIN release_request_metrics metrics
         ON metrics.release_id = r.id AND metrics.platform = platforms.platform
+      LEFT JOIN (
+        SELECT release_id, platform, COUNT(*) AS count
+        FROM release_failed_launches
+        GROUP BY release_id, platform
+      ) failed ON failed.release_id = r.id AND failed.platform = platforms.platform
       WHERE r.status IN ('active', 'inactive')
         ${releaseId ? 'AND r.id = $1' : ''}
       ORDER BY r.runtime_version DESC, r.timestamp DESC, platforms.platform
@@ -406,6 +436,7 @@ export class PostgresDatabase implements DatabaseInterface {
       downloadAttempts: Number(row.downloadAttempts),
       assetRequests: Number(row.assetRequests),
       bytesTransferred: Number(row.bytesTransferred),
+      failedLaunches: Number(row.failedLaunches),
     }));
   }
 

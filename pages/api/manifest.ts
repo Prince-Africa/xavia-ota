@@ -2,7 +2,7 @@ import FormData from 'form-data';
 import { randomUUID } from 'crypto';
 
 import { NextApiRequest, NextApiResponse } from 'next';
-import { serializeDictionary } from 'structured-headers';
+import { parseList, serializeDictionary } from 'structured-headers';
 
 import { ConfigHelper } from '../../apiUtils/helpers/ConfigHelper';
 import { DictionaryHelper } from '../../apiUtils/helpers/DictionaryHelper';
@@ -18,6 +18,23 @@ import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 
 const logger = getLogger('manifest');
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Update IDs are cut from a SHA-256 hash, so they carry no UUID version or variant bits.
+const UPDATE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// expo-updates lists updates that threw before their first screen and were rolled back.
+function getRecentFailedUpdateIds(header: string | string[] | undefined): string[] {
+  if (typeof header !== 'string') return [];
+  try {
+    return parseList(header)
+      .map(([value]) => value)
+      .filter(
+        (value): value is string => typeof value === 'string' && UPDATE_ID_PATTERN.test(value)
+      )
+      .map((value) => value.toLowerCase());
+  } catch {
+    return [];
+  }
+}
 
 function getInstallationId(
   req: NextApiRequest,
@@ -38,6 +55,24 @@ async function trackInstallation(releaseId: string, platform: string, installati
     await DatabaseFactory.getDatabase().createTracking({ releaseId, platform, installationId });
   } catch (error) {
     logger.error('Failed to track installation', { releaseId, error });
+  }
+}
+
+async function trackFailedLaunches(
+  runtimeVersion: string,
+  platform: string,
+  installationId: string,
+  updateIds: string[]
+) {
+  try {
+    await DatabaseFactory.getDatabase().recordFailedLaunches(
+      runtimeVersion,
+      platform,
+      installationId,
+      updateIds
+    );
+  } catch (error) {
+    logger.error('Failed to record failed launches', { runtimeVersion, error });
   }
 }
 
@@ -62,6 +97,8 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
     protocolVersion: req.headers['expo-protocol-version'],
     apiVersion: req.headers['expo-api-version'],
     currentUpdateId: req.headers['expo-current-update-id'],
+    embeddedUpdateId: req.headers['expo-embedded-update-id'],
+    recentFailedUpdateIds: req.headers['expo-recent-failed-update-ids'],
   });
 
   const protocolVersionMaybeArray = req.headers['expo-protocol-version'];
@@ -94,6 +131,10 @@ export default async function manifestEndpoint(req: NextApiRequest, res: NextApi
   }
 
   const installation = getInstallationId(req, res);
+  const failedUpdateIds = getRecentFailedUpdateIds(req.headers['expo-recent-failed-update-ids']);
+  if (installation.confirmed && failedUpdateIds.length > 0) {
+    await trackFailedLaunches(runtimeVersion, platform, installation.id, failedUpdateIds);
+  }
 
   const database = DatabaseFactory.getDatabase();
   const releaseRecord = await database.getLatestReleaseRecordForRuntimeVersion(runtimeVersion);

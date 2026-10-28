@@ -61,6 +61,7 @@ interface ReleasePlatformMetrics {
   downloadAttempts: number;
   assetRequests: number;
   bytesTransferred: number;
+  failedLaunches: number;
 }
 
 interface ReleaseMetricsState {
@@ -656,6 +657,11 @@ export default function RuntimeReleasesPage() {
                                       <Th isNumeric>Download attempts</Th>
                                       <Th isNumeric>Asset requests</Th>
                                       <Th isNumeric>Bytes transferred</Th>
+                                      <Th isNumeric>
+                                        <Tooltip label="Installations where this release crashed before its first screen, so the phone went back to its previous version.">
+                                          Failed launches
+                                        </Tooltip>
+                                      </Th>
                                     </Tr>
                                   </Thead>
                                   <Tbody>
@@ -678,6 +684,14 @@ export default function RuntimeReleasesPage() {
                                         </Td>
                                         <Td isNumeric fontFamily="mono">
                                           {formatFileSize(row.bytesTransferred)}
+                                        </Td>
+                                        <Td
+                                          isNumeric
+                                          fontFamily="mono"
+                                          color={
+                                            row.failedLaunches > 0 ? 'warning.text' : undefined
+                                          }>
+                                          {row.failedLaunches.toLocaleString()}
                                         </Td>
                                       </Tr>
                                     ))}
