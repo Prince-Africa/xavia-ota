@@ -265,7 +265,12 @@ export class ReleaseAssetCache {
         (dir) => dir.name.startsWith(TEMP_PREFIX) && now - dir.mtimeMs > TEMP_MAX_AGE_MS
       );
       const releases = dirs
-        .filter((dir) => !dir.name.startsWith(TEMP_PREFIX) && dir.name !== keepReleaseId)
+        .filter(
+          (dir) =>
+            !dir.name.startsWith(TEMP_PREFIX) &&
+            dir.name !== 'bundle-patches-v1' &&
+            dir.name !== keepReleaseId
+        )
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(this.getMaxReleasesOnDisk() - 1);
 

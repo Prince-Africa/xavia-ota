@@ -7,11 +7,13 @@ import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
 
+import { BundlePatchCache } from '../apiUtils/helpers/BundlePatchCache';
 import { ReleaseAssetCache } from '../apiUtils/helpers/ReleaseAssetCache';
 import assetsEndpoint from '../pages/api/assets';
 import { DatabaseFactory } from '../apiUtils/database/DatabaseFactory';
 import { StorageFactory } from '../apiUtils/storage/StorageFactory';
 
+jest.mock('../apiUtils/helpers/BundlePatchCache');
 jest.mock('../apiUtils/database/DatabaseFactory');
 jest.mock('../apiUtils/storage/StorageFactory');
 
@@ -71,6 +73,7 @@ describe('Assets API', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (BundlePatchCache.getPatch as jest.Mock).mockResolvedValue(null);
     cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'assets-test-'));
     process.env.ASSET_CACHE_DIR = cacheDir;
     ReleaseAssetCache.clearMemory();
@@ -152,8 +155,10 @@ describe('Assets API', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('application/javascript');
     expect(res.headers['content-encoding']).toBe('gzip');
-    expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
-    expect(res.headers['vary']).toBe('Accept-Encoding');
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.headers['vary']).toBe(
+      'Accept-Encoding, A-IM, Expo-Current-Update-ID, Expo-Requested-Update-ID'
+    );
     expect(Number(res.headers['content-length'])).toBe(res.body.length);
     expect(res.body.length).toBeLessThan(bundle.length);
     expect(zlib.gunzipSync(res.body)).toEqual(bundle);
@@ -190,6 +195,49 @@ describe('Assets API', () => {
     expect(res.headers['content-encoding']).toBeUndefined();
     expect(res.headers['vary']).toBeUndefined();
     expect(res.body).toEqual(image);
+  });
+
+  it('serves negotiated patches with Expo headers and counts patch bytes', async () => {
+    const patch = Buffer.from('BSDIFF40-example');
+    (BundlePatchCache.getPatch as jest.Mock).mockResolvedValue(patch);
+    const res = await get('bundles/ios.hbc', {
+      'a-im': 'bsdiff',
+      'expo-current-update-id': '01234567-0123-0123-0123-0123456789ab',
+      'expo-requested-update-id': 'rollback-publication-id',
+      'accept-encoding': 'gzip',
+    });
+    expect(res.status).toBe(226);
+    expect(res.headers.im).toBe('bsdiff');
+    expect(res.headers['expo-base-update-id']).toBe('01234567-0123-0123-0123-0123456789ab');
+    expect(res.headers['content-encoding']).toBeUndefined();
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.body).toEqual(patch);
+    expect(recordAssetRequest).toHaveBeenCalledWith(expect.any(String), 'ios', patch.length, null);
+    expect(BundlePatchCache.getPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fullDownloadSize: expect.any(Number),
+        platform: 'ios',
+        runtimeVersion: '1.0.0',
+      })
+    );
+  });
+
+  it.each([
+    { 'a-im': 'bsdiff' },
+    { 'expo-current-update-id': 'base' },
+    { 'a-im': 'bsdiff', 'expo-current-update-id': 'base', 'expo-requested-update-id': 'wrong' },
+  ])('serves full bundles without valid negotiation: %j', async (headers) => {
+    const res = await get('bundles/ios.hbc', headers);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(bundle);
+    expect(BundlePatchCache.getPatch).not.toHaveBeenCalled();
+  });
+
+  it('does not patch image assets even if requested', async () => {
+    const res = await get('assets/image', { 'a-im': 'bsdiff', 'expo-current-update-id': 'base' });
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect(BundlePatchCache.getPatch).not.toHaveBeenCalled();
   });
 
   it('unpacks the release zip once across asset requests', async () => {

@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { pipeline } from 'stream/promises';
 
+import { BundlePatchCache } from '../../apiUtils/helpers/BundlePatchCache';
 import { ReleaseAssetCache } from '../../apiUtils/helpers/ReleaseAssetCache';
 import { DatabaseFactory } from '../../apiUtils/database/DatabaseFactory';
 
@@ -68,19 +69,62 @@ export default async function assetsEndpoint(req: NextApiRequest, res: NextApiRe
       return;
     }
 
-    const file = await ReleaseAssetCache.openAsset(
-      release,
-      asset,
-      acceptsGzip(req.headers['accept-encoding'])
-    );
-    // The URL names one update's copy of a content-hashed file, so its bytes never change.
-    res.statusCode = 200;
-    res.setHeader('content-type', asset.contentType ?? 'application/octet-stream');
-    res.setHeader('content-length', file.size);
-    res.setHeader('cache-control', 'public, max-age=31536000, immutable');
-    if (asset.gzipSize !== null) res.setHeader('vary', 'Accept-Encoding');
-    if (file.gzipped) res.setHeader('content-encoding', 'gzip');
-    await pipeline(file.handle.createReadStream(), res);
+    const gzipAccepted = acceptsGzip(req.headers['accept-encoding']);
+    const baseUpdateId = req.headers['expo-current-update-id'];
+    const requestedUpdateId = req.headers['expo-requested-update-id'];
+    const aim = req.headers['a-im'];
+    const wantsPatch =
+      typeof aim === 'string' &&
+      aim.split(',').some((value) => value.trim().toLowerCase() === 'bsdiff');
+    const isLaunchAsset = prepared.platforms[platform]?.launchAsset.path === asset.path;
+    const fullSize = gzipAccepted && asset.gzipSize !== null ? asset.gzipSize : asset.size;
+    const patch =
+      wantsPatch &&
+      isLaunchAsset &&
+      typeof baseUpdateId === 'string' &&
+      (!requestedUpdateId ||
+        (typeof requestedUpdateId === 'string' &&
+          requestedUpdateId.toLowerCase() === updateId.toLowerCase()))
+        ? await BundlePatchCache.getPatch({
+            baseUpdateId,
+            runtimeVersion,
+            platform,
+            target: release,
+            targetAsset: asset,
+            fullDownloadSize: fullSize,
+          })
+        : null;
+
+    let transferredBytes: number;
+    // Patch negotiation must never leak a base-specific response through a shared cache.
+    // Keep the same Vary fields on both the patch and full-bundle fallback.
+    if (isLaunchAsset) {
+      res.setHeader(
+        'vary',
+        'Accept-Encoding, A-IM, Expo-Current-Update-ID, Expo-Requested-Update-ID'
+      );
+      res.setHeader('cache-control', 'private, no-store');
+    } else {
+      res.setHeader('cache-control', 'public, max-age=31536000, immutable');
+      if (asset.gzipSize !== null) res.setHeader('vary', 'Accept-Encoding');
+    }
+    if (patch) {
+      transferredBytes = patch.length;
+      res.statusCode = 226;
+      res.setHeader('im', 'bsdiff');
+      res.setHeader('expo-base-update-id', (baseUpdateId as string).toLowerCase());
+      res.setHeader('content-type', 'application/octet-stream');
+      res.setHeader('content-length', patch.length);
+      res.end(patch);
+    } else {
+      const file = await ReleaseAssetCache.openAsset(release, asset, gzipAccepted);
+      transferredBytes = file.size;
+      res.statusCode = 200;
+      res.setHeader('content-type', asset.contentType ?? 'application/octet-stream');
+      res.setHeader('content-length', file.size);
+      if (file.gzipped) res.setHeader('content-encoding', 'gzip');
+      await pipeline(file.handle.createReadStream(), res);
+    }
 
     try {
       const installationHeader = req.headers['x-installation-id'];
@@ -91,7 +135,7 @@ export default async function assetsEndpoint(req: NextApiRequest, res: NextApiRe
       await DatabaseFactory.getDatabase().recordAssetRequest(
         release.id,
         platform,
-        file.size,
+        transferredBytes,
         installationId
       );
     } catch (error) {

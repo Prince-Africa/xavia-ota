@@ -54,3 +54,14 @@ export interface DatabaseInterface {
   getMonthlyInstallationMetrics(): Promise<MonthlyInstallationMetrics[]>;
   getLatestReleaseRecordForRuntimeVersion(runtimeVersion: string): Promise<Release | null>;
 }
+
+export interface BundlePatch {
+  targetReleaseId: string;
+  baseReleaseId: string;
+  platform: string;
+  targetHash: string;
+  baseHash: string;
+  patchHash: string;
+  storagePath: string;
+  size: number;
+}
