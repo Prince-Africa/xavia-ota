@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 
 import {
   DatabaseInterface,
+  BundlePatch,
   MonthlyInstallationMetrics,
   Release,
   Tracking,
@@ -43,6 +44,61 @@ export class PostgresDatabase implements DatabaseInterface {
     const { rows } = await this.pool.query(query, [runtimeVersion]);
     return rows[0] || null;
   }
+  // Bound upload work to recent releases of this runtime, prioritising the active base.
+  async getRecentPatchBases(runtimeVersion: string, targetReleaseId: string): Promise<Release[]> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT id, runtime_version as "runtimeVersion", path, timestamp, status
+      FROM releases
+      WHERE runtime_version = $1 AND id <> $2 AND status IN ('active', 'inactive')
+      ORDER BY (status = 'active') DESC, timestamp DESC, id DESC LIMIT 3
+    `,
+      [runtimeVersion, targetReleaseId]
+    );
+    return rows;
+  }
+
+  async saveBundlePatch(patch: BundlePatch): Promise<void> {
+    await this.pool.query(
+      `
+      INSERT INTO release_bundle_patches
+        (target_release_id, base_release_id, platform, target_hash, base_hash, patch_hash, storage_path, size)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (target_release_id, base_release_id, platform) DO UPDATE
+      SET target_hash = EXCLUDED.target_hash, base_hash = EXCLUDED.base_hash,
+          patch_hash = EXCLUDED.patch_hash, storage_path = EXCLUDED.storage_path, size = EXCLUDED.size
+    `,
+      [
+        patch.targetReleaseId,
+        patch.baseReleaseId,
+        patch.platform,
+        patch.targetHash,
+        patch.baseHash,
+        patch.patchHash,
+        patch.storagePath,
+        patch.size,
+      ]
+    );
+  }
+
+  async getBundlePatch(
+    targetReleaseId: string,
+    baseReleaseId: string,
+    platform: string
+  ): Promise<BundlePatch | null> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT target_release_id as "targetReleaseId", base_release_id as "baseReleaseId", platform,
+             target_hash as "targetHash", base_hash as "baseHash", patch_hash as "patchHash",
+             storage_path as "storagePath", size
+      FROM release_bundle_patches
+      WHERE target_release_id = $1 AND base_release_id = $2 AND platform = $3
+    `,
+      [targetReleaseId, baseReleaseId, platform]
+    );
+    return rows[0] || null;
+  }
+
   async getReleaseByPath(path: string): Promise<Release | null> {
     const query = `
       SELECT id, runtime_version as "runtimeVersion", path, timestamp,
