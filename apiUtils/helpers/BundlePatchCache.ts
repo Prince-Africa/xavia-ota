@@ -15,16 +15,26 @@ const logger = getLogger('BundlePatchCache');
 const UPDATE_ID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 const MAX_CACHE_FILES = 128;
-const TIMEOUT_MS = 15000;
+// bsdiff took 23 s for a 13 MB bundle at half a vCPU; leave room for a busy task.
+const TIMEOUT_MS = 120000;
 
 type ReleaseRef = { id: string; path: string };
+
+// The diff shares the task's CPU with phone requests; lowest priority lets those go first.
+function runTool(binary: string, args: string[]) {
+  return run('nice', ['-n', '19', binary, ...args], {
+    timeout: TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
+  });
+}
 export interface BundlePatchSummary {
   ready: number;
   patchBytes: number;
   fullBytes: number;
 }
 
-// Patches are generated only while uploading. Downloads resolve persisted references and bytes.
+// Patches are generated only after an upload goes live. Downloads resolve persisted references and
+// bytes.
 export class BundlePatchCache {
   private static generation: Promise<unknown> = Promise.resolve();
 
@@ -78,8 +88,8 @@ export class BundlePatchCache {
         if (patch.length >= fullSize * 0.9) continue;
         const patchHash = createHash('sha256').update(patch).digest('hex');
         const storagePath = `bundle-patches/${patchHash}.patch`;
-        // Persist bytes before the reference. A storage/DB failure prevents activation, so no
-        // release can advertise a patch whose upload has not completed.
+        // Persist bytes before the reference, so no release can advertise a patch whose upload has
+        // not completed.
         await StorageFactory.getStorage().uploadFile(storagePath, patch);
         await database.saveBundlePatch({
           targetReleaseId: target.id,
@@ -96,7 +106,7 @@ export class BundlePatchCache {
         summary.fullBytes += fullSize;
       }
     }
-    logger.info('Prepared release bundle patches before activation', {
+    logger.info('Prepared release bundle patches', {
       releaseId: target.id,
       ...summary,
     });
@@ -192,14 +202,8 @@ export class BundlePatchCache {
           await file.handle.close();
         }
       }
-      await run(process.env.BSDIFF_BINARY || 'bsdiff', [oldPath, newPath, patchPath], {
-        timeout: TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      });
-      await run(process.env.BSPATCH_BINARY || 'bspatch', [oldPath, resultPath, patchPath], {
-        timeout: TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      });
+      await runTool(process.env.BSDIFF_BINARY || 'bsdiff', [oldPath, newPath, patchPath]);
+      await runTool(process.env.BSPATCH_BINARY || 'bspatch', [oldPath, resultPath, patchPath]);
       const rebuilt = await fs.readFile(resultPath);
       const hash = createHash('sha256')
         .update(rebuilt)

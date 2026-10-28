@@ -12,19 +12,19 @@ The client requests its launch asset with `A-IM: bsdiff` and
 runtime, then selects the same platform's bundle. This supports skipped releases
 and rollback publications, not just the immediately previous upload.
 
-Patches are generated during upload against the three most recent completed
-releases of the same runtime (active release first), for iOS and Android. Xavia
-creates a release row in `uploading` state, validates/caches its assets, stores the
-full ZIP, generates patches, persists useful patch objects and their database
-references, and only then activates the release. The uploading row is needed to
-associate the patch references; phones cannot receive it until activation.
+Patches are generated after upload against the three most recent completed
+releases of the same runtime (newest first), for iOS and Android. Xavia creates a
+release row in `uploading` state, validates/caches its assets, stores the full ZIP,
+activates the release and replies to the uploader, then generates patches and
+persists useful patch objects and their database references. Phones get the full
+bundle until a patch for their base is saved.
 
 Before saving a patch, Xavia applies it using the decoder shipped by Expo and
 checks the reconstructed target's SHA-256 against the manifest. A patch is kept
 only if it is at least 10% smaller than the full transfer, including gzip when
-available. Each fresh upload response includes `bundlePatches` with `ready`,
-`patchBytes`, and `fullBytes`. The byte totals sum all retained base/platform
-pairs; they are not the total size downloaded by an individual phone.
+available. When generation finishes, the log line `Prepared release bundle patches`
+reports `ready`, `patchBytes`, and `fullBytes`. The byte totals sum all retained
+base/platform pairs; they are not the total size downloaded by an individual phone.
 
 Patch objects live in durable storage under `bundle-patches/`, and the
 `release_bundle_patches` table associates each object with a base release, target
@@ -75,15 +75,18 @@ Settings:
 - `BSDIFF_BINARY` / `BSPATCH_BINARY` override the executable paths (defaults: PATH).
 - Patches live under `ASSET_CACHE_DIR/bundle-patches-v1` and are disposable.
 
-Each process generates one patch at a time during upload, even if uploads
-overlap. Each tool has a 15-second timeout. Bundles larger than 32 MiB use full
-downloads to bound diff memory. At most six patches are attempted per upload
-(three bases times two platforms), so upload processing takes longer. Ensure the
-upload proxy timeout permits this processing time.
+Each process generates one patch at a time, even if uploads overlap. The tools run
+at the lowest CPU priority (`nice -n 19`) so phone requests are served first, and
+each has a 2-minute timeout: bsdiff took 23 s for a 13 MB Hermes bundle at half a
+vCPU and uses about 210 MB of memory. Bundles larger than 32 MiB use full downloads
+to bound diff memory. At most six patches are attempted per upload (three bases
+times two platforms). Generation runs after the upload response, so the upload
+never waits on it or on the load balancer's 60-second idle timeout.
 
 Generation/verification failures skip that pair and keep the full-bundle path.
-Failures to persist a retained patch or its DB reference fail the release before
-activation; the previous active release remains available. Prepared objects are
+Failures to persist a retained patch or its DB reference are logged as
+`Bundle patch preparation failed`; the release stays live and serves full bundles.
+A restart during generation leaves that release without patches. Prepared objects are
 immutable and reused across processes. Failed uploads can leave unreferenced
 objects, which can be reclaimed separately under a storage retention policy.
 
@@ -102,9 +105,8 @@ Also run `npm run lint` and `npx tsc --noEmit -p .`.
 
 After deployment, use a release build running a known published update and
 publish a small JS change with the same runtime version. Confirm the bundle
-request has `A-IM: bsdiff`, returns 226, and the upload response reports prepared
-patches. The upload logs include
-`Prepared release bundle patches before activation`; download requests should
+request has `A-IM: bsdiff` and returns 226. The upload logs include
+`Prepared release bundle patches` shortly after the upload; download requests should
 never log new patch generation. The existing transfer metrics count the
 actual patch response bytes. Check `Updates.readLogEntriesAsync()` for the
 client's successful diff application, then repeat with an older base and with

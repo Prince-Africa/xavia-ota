@@ -20,7 +20,7 @@ RUN npm run build
 
 FROM node:22-alpine AS runner
 
-RUN apk add --no-cache bzip2-libs
+RUN apk add --no-cache libbz2
 COPY --from=patch-tools /usr/local/bin/bsdiff /usr/local/bin/bspatch /usr/local/bin/
 
 WORKDIR /app

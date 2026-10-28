@@ -10,7 +10,7 @@ import { randomUUID } from 'crypto';
 import { ZipHelper } from '../../apiUtils/helpers/ZipHelper';
 import { HashHelper } from '../../apiUtils/helpers/HashHelper';
 import { BundlePatchCache } from '../../apiUtils/helpers/BundlePatchCache';
-import { ReleaseAssetCache } from '../../apiUtils/helpers/ReleaseAssetCache';
+import { PreparedRelease, ReleaseAssetCache } from '../../apiUtils/helpers/ReleaseAssetCache';
 import { RepositoryHelper } from '../../apiUtils/helpers/RepositoryHelper';
 
 export const config = {
@@ -94,19 +94,25 @@ export default async function uploadHandler(req: NextApiRequest, res: NextApiRes
       return;
     }
 
-    let bundlePatches;
+    let prepared: PreparedRelease;
     try {
       // Hash and unpack the assets now so the first phone gets them from the cache, and a bundle
       // phones could not use fails here instead of going live.
-      const prepared = await ReleaseAssetCache.prepareFromZip(release.id, zipFolder);
+      prepared = await ReleaseAssetCache.prepareFromZip(release.id, zipFolder);
       await StorageFactory.getStorage().uploadFile(release.path, zipContent);
-      bundlePatches = await BundlePatchCache.prepareRelease(release, prepared);
       await database.activateRelease(release.id);
     } catch (error) {
       await database.failRelease(release.id);
       throw error;
     }
-    res.status(200).json({ success: true, path: release.path, updateId, bundlePatches });
+    res.status(200).json({ success: true, path: release.path, updateId });
+
+    // A patch takes ~25 s per bundle on half a vCPU, longer than the load balancer lets the
+    // upload wait. Make them after replying; phones get the full bundle until a patch is ready.
+    const target = release;
+    BundlePatchCache.prepareRelease(target, prepared).catch((error) => {
+      console.error('Bundle patch preparation failed:', { releaseId: target.id, error });
+    });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Upload failed' });

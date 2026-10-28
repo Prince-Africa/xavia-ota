@@ -98,7 +98,6 @@ describe('Upload API', () => {
       success: true,
       path: expect.stringMatching(/^updates\/1\.0\.0\/[0-9a-f-]+\.zip$/),
       updateId: mockUpdateId,
-      bundlePatches: { ready: 2, patchBytes: 300, fullBytes: 20000 },
     });
 
     // Verify all mocks were called correctly
@@ -123,10 +122,11 @@ describe('Upload API', () => {
       await (ReleaseAssetCache.prepareFromZip as jest.Mock).mock.results[0].value
     );
     expect(mockStorage.uploadFile.mock.invocationCallOrder[0]).toBeLessThan(
-      (BundlePatchCache.prepareRelease as jest.Mock).mock.invocationCallOrder[0]
-    );
-    expect((BundlePatchCache.prepareRelease as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
       mockDatabase.activateRelease.mock.invocationCallOrder[0]
+    );
+    // Patches are made after the release is live, so the upload never waits for them.
+    expect(mockDatabase.activateRelease.mock.invocationCallOrder[0]).toBeLessThan(
+      (BundlePatchCache.prepareRelease as jest.Mock).mock.invocationCallOrder[0]
     );
     expect(ZipHelper.getFileFromZip).toHaveBeenCalledWith(mockZipFolder, 'metadata.json');
     expect(HashHelper.createHash).toHaveBeenCalledWith(mockMetadataContent, 'sha256', 'hex');
@@ -227,7 +227,7 @@ describe('Upload API', () => {
     errorSpy.mockRestore();
   });
 
-  it('does not activate a release when patch persistence fails', async () => {
+  it('keeps a release live when its patches cannot be prepared', async () => {
     (formidable as unknown as jest.Mock).mockReturnValue({
       parse: jest
         .fn()
@@ -264,9 +264,14 @@ describe('Upload API', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const { req, res } = createMocks({ method: 'POST' });
     await uploadHandler(req, res);
-    expect(res._getStatusCode()).toBe(500);
-    expect(database.failRelease).toHaveBeenCalledWith('new-release');
-    expect(database.activateRelease).not.toHaveBeenCalled();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(res._getStatusCode()).toBe(200);
+    expect(database.activateRelease).toHaveBeenCalledWith('new-release');
+    expect(database.failRelease).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Bundle patch preparation failed:',
+      expect.objectContaining({ releaseId: 'new-release' })
+    );
     errorSpy.mockRestore();
   });
 
